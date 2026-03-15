@@ -1,0 +1,6 @@
+node_modules/
+uploads/
+data/
+.env
+admin-ui/node_modules/
+admin-ui/dist/
