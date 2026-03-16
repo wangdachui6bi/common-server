@@ -1,6 +1,10 @@
 <script setup>
 import { ref, onMounted } from "vue";
-import { fetchReleases, uploadRelease, deleteRelease } from "../composables/api.js";
+import {
+  fetchReleases,
+  uploadRelease,
+  deleteRelease,
+} from "../composables/api.js";
 
 const props = defineProps({ appId: String });
 
@@ -10,7 +14,12 @@ const loading = ref(true);
 
 const showUpload = ref(false);
 const uploading = ref(false);
-const form = ref({ version: "", platform: "android", changelog: "", forceUpdate: false });
+const form = ref({
+  version: "",
+  platform: "android",
+  changelog: "",
+  forceUpdate: false,
+});
 const selectedFile = ref(null);
 const dragover = ref(false);
 
@@ -55,11 +64,11 @@ async function handleUpload() {
   uploading.value = true;
 
   const fd = new FormData();
-  fd.append("file", selectedFile.value);
   fd.append("version", form.value.version.trim());
   fd.append("platform", form.value.platform);
   fd.append("changelog", form.value.changelog);
   fd.append("forceUpdate", form.value.forceUpdate ? "1" : "0");
+  fd.append("file", selectedFile.value);
 
   try {
     await uploadRelease(props.appId, fd);
@@ -86,7 +95,12 @@ async function handleDelete(version, platform) {
 
 function resetForm() {
   showUpload.value = false;
-  form.value = { version: "", platform: "android", changelog: "", forceUpdate: false };
+  form.value = {
+    version: "",
+    platform: "android",
+    changelog: "",
+    forceUpdate: false,
+  };
   selectedFile.value = null;
 }
 
@@ -104,7 +118,9 @@ function formatSize(bytes) {
 
 function formatDate(dateStr) {
   if (!dateStr) return "-";
-  return new Date(dateStr + "Z").toLocaleString("zh-CN");
+  const d = new Date(dateStr);
+  if (isNaN(d)) return dateStr;
+  return d.toLocaleString("zh-CN");
 }
 </script>
 
@@ -113,8 +129,12 @@ function formatDate(dateStr) {
     <router-link to="/apps" class="back-link">← 返回应用列表</router-link>
 
     <div class="flex-between mb-16">
-      <h1 class="page-title" style="margin-bottom:0">{{ appId }}</h1>
-      <button v-if="!showUpload" class="btn btn-primary" @click="showUpload = true">
+      <h1 class="page-title" style="margin-bottom: 0">{{ appId }}</h1>
+      <button
+        v-if="!showUpload"
+        class="btn btn-primary"
+        @click="showUpload = true"
+      >
         上传新版本
       </button>
     </div>
@@ -124,21 +144,32 @@ function formatDate(dateStr) {
       <h3 class="upload-title">上传新版本</h3>
       <form @submit.prevent="handleUpload">
         <div class="form-row">
-          <div class="form-group" style="flex:1">
+          <div class="form-group" style="flex: 1">
             <label>版本号</label>
-            <input v-model="form.version" type="text" placeholder="1.0.0" required />
+            <input
+              v-model="form.version"
+              type="text"
+              placeholder="1.0.0"
+              required
+            />
           </div>
-          <div class="form-group" style="flex:1">
+          <div class="form-group" style="flex: 1">
             <label>平台</label>
             <select v-model="form.platform">
-              <option v-for="p in PLATFORMS" :key="p.value" :value="p.value">{{ p.label }}</option>
+              <option v-for="p in PLATFORMS" :key="p.value" :value="p.value">
+                {{ p.label }}
+              </option>
             </select>
           </div>
         </div>
 
         <div class="form-group">
           <label>更新日志</label>
-          <textarea v-model="form.changelog" rows="3" placeholder="本次更新内容..."></textarea>
+          <textarea
+            v-model="form.changelog"
+            rows="3"
+            placeholder="本次更新内容..."
+          ></textarea>
         </div>
 
         <div class="form-group">
@@ -152,13 +183,22 @@ function formatDate(dateStr) {
             @click="$refs.fileInput.click()"
           >
             <div v-if="!selectedFile">拖拽文件到此处，或点击选择</div>
-            <div v-else class="file-name">{{ selectedFile.name }} ({{ formatSize(selectedFile.size) }})</div>
+            <div v-else class="file-name">
+              {{ selectedFile.name }} ({{ formatSize(selectedFile.size) }})
+            </div>
           </div>
           <input ref="fileInput" type="file" hidden @change="onFileSelect" />
         </div>
 
         <div class="form-group">
-          <label style="display:inline-flex; align-items:center; gap:8px; cursor:pointer">
+          <label
+            style="
+              display: inline-flex;
+              align-items: center;
+              gap: 8px;
+              cursor: pointer;
+            "
+          >
             <input v-model="form.forceUpdate" type="checkbox" />
             强制更新
           </label>
@@ -172,7 +212,9 @@ function formatDate(dateStr) {
           >
             {{ uploading ? "上传中..." : "确认上传" }}
           </button>
-          <button type="button" class="btn btn-outline" @click="resetForm">取消</button>
+          <button type="button" class="btn btn-outline" @click="resetForm">
+            取消
+          </button>
         </div>
       </form>
     </div>
@@ -201,15 +243,27 @@ function formatDate(dateStr) {
             <tr v-for="r in releases" :key="r.version + r.platform">
               <td>
                 <strong>{{ r.version }}</strong>
-                <span v-if="r.forceUpdate" class="tag tag-force" style="margin-left:6px">强制</span>
+                <span
+                  v-if="r.forceUpdate"
+                  class="tag tag-force"
+                  style="margin-left: 6px"
+                  >强制</span
+                >
               </td>
-              <td><span class="tag tag-platform">{{ r.platform }}</span></td>
+              <td>
+                <span class="tag tag-platform">{{ r.platform }}</span>
+              </td>
               <td class="file-size">{{ formatSize(r.filesize) }}</td>
               <td class="changelog-cell">{{ r.changelog || "-" }}</td>
-              <td style="white-space:nowrap">{{ formatDate(r.createdAt) }}</td>
+              <td style="white-space: nowrap">{{ formatDate(r.createdAt) }}</td>
               <td>
                 <div class="action-btns">
-                  <a :href="r.downloadUrl" target="_blank" class="btn btn-outline btn-sm">下载</a>
+                  <a
+                    :href="r.downloadUrl"
+                    target="_blank"
+                    class="btn btn-outline btn-sm"
+                    >下载</a
+                  >
                   <button
                     class="btn btn-danger btn-sm"
                     @click="handleDelete(r.version, r.platform)"
@@ -225,7 +279,9 @@ function formatDate(dateStr) {
     </div>
 
     <!-- Toast -->
-    <div v-if="toast.show" :class="['toast', `toast-${toast.type}`]">{{ toast.msg }}</div>
+    <div v-if="toast.show" :class="['toast', `toast-${toast.type}`]">
+      {{ toast.msg }}
+    </div>
   </div>
 </template>
 

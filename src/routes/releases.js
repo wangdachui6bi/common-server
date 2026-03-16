@@ -3,20 +3,12 @@ import multer from "multer";
 import { mkdirSync, existsSync, unlinkSync } from "fs";
 import { join, extname } from "path";
 import { config } from "../config.js";
-import { stmts } from "../db/index.js";
+import { db } from "../db/index.js";
 import { requireAdmin } from "../middleware/auth.js";
 
 const router = Router();
 
 mkdirSync(config.uploadDir, { recursive: true });
-
-const PLATFORM_EXTENSIONS = {
-  android: [".apk", ".aab"],
-  "electron-win": [".exe", ".msi", ".nsis"],
-  "electron-mac": [".dmg", ".zip"],
-  "electron-linux": [".AppImage", ".deb", ".rpm", ".snap"],
-  ios: [".ipa"],
-};
 
 const storage = multer.diskStorage({
   destination(_req, _file, cb) {
@@ -33,12 +25,12 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 500 * 1024 * 1024 }, // 500MB max
+  limits: { fileSize: 500 * 1024 * 1024 },
 });
 
 // ─── Admin: List all apps ─────────────────────────────────────────────────────
-router.get("/", requireAdmin, (_req, res) => {
-  const apps = stmts.listApps.all();
+router.get("/", requireAdmin, async (_req, res) => {
+  const apps = await db.listApps();
   res.json(
     apps.map((a) => ({
       appId: a.app_id,
@@ -49,11 +41,11 @@ router.get("/", requireAdmin, (_req, res) => {
 });
 
 // ─── Public: Get latest release for an app + platform ────────────────────────
-router.get("/:appId/releases/latest", (req, res) => {
+router.get("/:appId/releases/latest", async (req, res) => {
   const { appId } = req.params;
   const platform = req.query.platform || "android";
 
-  const release = stmts.getLatest.get({ appId, platform });
+  const release = await db.getLatest({ appId, platform });
   if (!release) {
     return res.status(404).json({ error: "No release found" });
   }
@@ -69,11 +61,11 @@ router.get("/:appId/releases/latest", (req, res) => {
 });
 
 // ─── Public: Download a specific release ─────────────────────────────────────
-router.get("/:appId/releases/:version/download", (req, res) => {
+router.get("/:appId/releases/:version/download", async (req, res) => {
   const { appId, version } = req.params;
   const platform = req.query.platform || "android";
 
-  const release = stmts.getByVersion.get({ appId, version, platform });
+  const release = await db.getByVersion({ appId, version, platform });
   if (!release) {
     return res.status(404).json({ error: "Release not found" });
   }
@@ -87,7 +79,7 @@ router.get("/:appId/releases/:version/download", (req, res) => {
 });
 
 // ─── Admin: Upload a new release ─────────────────────────────────────────────
-router.post("/:appId/releases", requireAdmin, upload.single("file"), (req, res) => {
+router.post("/:appId/releases", requireAdmin, upload.single("file"), async (req, res) => {
   const { appId } = req.params;
   const { version, platform = "android", changelog = "", forceUpdate = "0" } = req.body;
 
@@ -98,15 +90,15 @@ router.post("/:appId/releases", requireAdmin, upload.single("file"), (req, res) 
     return res.status(400).json({ error: "file is required" });
   }
 
-  const existing = stmts.getByVersion.get({ appId, version, platform });
+  const existing = await db.getByVersion({ appId, version, platform });
   if (existing) {
     const oldPath = join(config.uploadDir, appId, existing.filename);
     if (existsSync(oldPath)) unlinkSync(oldPath);
-    stmts.deleteRelease.run({ appId, version, platform });
+    await db.deleteRelease({ appId, version, platform });
   }
 
   try {
-    stmts.insertRelease.run({
+    await db.insertRelease({
       appId,
       version,
       platform,
@@ -133,13 +125,13 @@ router.post("/:appId/releases", requireAdmin, upload.single("file"), (req, res) 
 });
 
 // ─── Admin: List releases ────────────────────────────────────────────────────
-router.get("/:appId/releases", requireAdmin, (req, res) => {
+router.get("/:appId/releases", requireAdmin, async (req, res) => {
   const { appId } = req.params;
   const limit = Math.min(parseInt(req.query.limit || "20", 10), 100);
   const offset = parseInt(req.query.offset || "0", 10);
 
-  const releases = stmts.listReleases.all({ appId, limit, offset });
-  const { total } = stmts.countReleases.get({ appId });
+  const releases = await db.listReleases({ appId, limit, offset });
+  const { total } = await db.countReleases({ appId });
 
   res.json({
     total,
@@ -158,11 +150,11 @@ router.get("/:appId/releases", requireAdmin, (req, res) => {
 });
 
 // ─── Admin: Delete a release ─────────────────────────────────────────────────
-router.delete("/:appId/releases/:version", requireAdmin, (req, res) => {
+router.delete("/:appId/releases/:version", requireAdmin, async (req, res) => {
   const { appId, version } = req.params;
   const platform = req.query.platform || "android";
 
-  const release = stmts.getByVersion.get({ appId, version, platform });
+  const release = await db.getByVersion({ appId, version, platform });
   if (!release) {
     return res.status(404).json({ error: "Release not found" });
   }
@@ -170,7 +162,7 @@ router.delete("/:appId/releases/:version", requireAdmin, (req, res) => {
   const filePath = join(config.uploadDir, appId, release.filename);
   if (existsSync(filePath)) unlinkSync(filePath);
 
-  stmts.deleteRelease.run({ appId, version, platform });
+  await db.deleteRelease({ appId, version, platform });
 
   res.json({ message: "Release deleted" });
 });

@@ -9,12 +9,20 @@ services:
       - PORT=3600
       - ADMIN_API_KEY=${ADMIN_API_KEY:-change-me-to-a-strong-random-string}
       - UPLOAD_DIR=/app/uploads
-      - DATABASE_PATH=/app/data/update-server.db
       - BASE_URL=${BASE_URL:-http://localhost:3600}
+      - MYSQL_HOST=${MYSQL_HOST:-mysql}
+      - MYSQL_PORT=${MYSQL_PORT:-3306}
+      - MYSQL_USER=${MYSQL_USER:-root}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-appdb}
     volumes:
-      - update-uploads:/app/uploads
-      - update-data:/app/data
+      - /data/common-server/uploads:/app/uploads
+    networks:
+      - gateway-network
+      - infra-network
 
-volumes:
-  update-uploads:
-  update-data:
+networks:
+  gateway-network:
+    external: true
+  infra-network:
+    external: true

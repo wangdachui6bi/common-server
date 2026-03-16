@@ -19,7 +19,9 @@ onMounted(async () => {
 
 function formatDate(dateStr) {
   if (!dateStr) return "-";
-  return new Date(dateStr + "Z").toLocaleString("zh-CN", {
+  const d = new Date(dateStr);
+  if (isNaN(d)) return dateStr;
+  return d.toLocaleString("zh-CN", {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -31,7 +33,7 @@ function formatDate(dateStr) {
 <template>
   <div>
     <div class="flex-between mb-16">
-      <h1 class="page-title" style="margin-bottom:0">应用管理</h1>
+      <h1 class="page-title" style="margin-bottom: 0">应用管理</h1>
       <router-link
         v-if="showNewApp && newAppId.trim()"
         :to="`/apps/${newAppId.trim()}`"
@@ -46,12 +48,16 @@ function formatDate(dateStr) {
     <div v-else-if="apps.length === 0 && !showNewApp" class="card empty">
       <p style="font-size: 16px; margin-bottom: 12px">暂无应用</p>
       <p style="margin-bottom: 16px">上传第一个版本后，应用会自动出现在这里</p>
-      <button class="btn btn-primary" @click="showNewApp = true">添加应用</button>
+      <button class="btn btn-primary" @click="showNewApp = true">
+        添加应用
+      </button>
     </div>
 
     <template v-else>
       <div v-if="!showNewApp" style="margin-bottom: 16px">
-        <button class="btn btn-outline btn-sm" @click="showNewApp = true">+ 新应用</button>
+        <button class="btn btn-outline btn-sm" @click="showNewApp = true">
+          + 新应用
+        </button>
       </div>
 
       <div v-if="showNewApp" class="card new-app-bar">
@@ -68,7 +74,9 @@ function formatDate(dateStr) {
         >
           前往上传
         </router-link>
-        <button class="btn btn-outline btn-sm" @click="showNewApp = false">取消</button>
+        <button class="btn btn-outline btn-sm" @click="showNewApp = false">
+          取消
+        </button>
       </div>
 
       <div class="apps-grid">
@@ -82,7 +90,8 @@ function formatDate(dateStr) {
           <div class="app-info">
             <div class="app-name">{{ app.appId }}</div>
             <div class="app-meta">
-              {{ app.releaseCount }} 个版本 · 最近更新 {{ formatDate(app.lastRelease) }}
+              {{ app.releaseCount }} 个版本 · 最近更新
+              {{ formatDate(app.lastRelease) }}
             </div>
           </div>
           <div class="app-arrow">→</div>
@@ -106,7 +115,9 @@ function formatDate(dateStr) {
   padding: 18px 20px;
   text-decoration: none;
   color: inherit;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
 }
 
 .app-card:hover {

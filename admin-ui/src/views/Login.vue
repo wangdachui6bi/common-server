@@ -47,7 +47,10 @@ async function handleLogin() {
 
         <p v-if="error" class="login-error">{{ error }}</p>
 
-        <button class="btn btn-primary login-btn" :disabled="loading || !apiKey.trim()">
+        <button
+          class="btn btn-primary login-btn"
+          :disabled="loading || !apiKey.trim()"
+        >
           {{ loading ? "验证中..." : "登录" }}
         </button>
       </form>

@@ -5,6 +5,7 @@ import { resolve, dirname } from "path";
 import { existsSync } from "fs";
 import { fileURLToPath } from "url";
 import { config } from "./config.js";
+import { initDB } from "./db/index.js";
 import releasesRouter from "./routes/releases.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -41,7 +42,14 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: "Internal server error" });
 });
 
-app.listen(config.port, "0.0.0.0", () => {
-  console.log(`Update server running on http://0.0.0.0:${config.port}`);
-  console.log(`Admin API key: ${config.adminApiKey.slice(0, 4)}****`);
-});
+initDB()
+  .then(() => {
+    app.listen(config.port, "0.0.0.0", () => {
+      console.log(`Update server running on http://0.0.0.0:${config.port}`);
+      console.log(`Admin API key: ${config.adminApiKey.slice(0, 4)}****`);
+    });
+  })
+  .catch((err) => {
+    console.error("Failed to initialize database:", err);
+    process.exit(1);
+  });
