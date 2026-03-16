@@ -115,6 +115,14 @@ export const db = {
     );
     return result;
   },
+
+  async deleteApp(appId) {
+    // Delete all releases for this app
+    await pool.execute(`DELETE FROM releases WHERE app_id = ?`, [appId]);
+    // Delete the app
+    const [result] = await pool.execute(`DELETE FROM apps WHERE app_id = ?`, [appId]);
+    return result;
+  },
 };
 
 export default pool;

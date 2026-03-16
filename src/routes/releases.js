@@ -1,6 +1,6 @@
 import { Router } from "express";
 import multer from "multer";
-import { mkdirSync, existsSync, unlinkSync } from "fs";
+import { mkdirSync, existsSync, unlinkSync, rmSync } from "fs";
 import { join, extname } from "path";
 import { config } from "../config.js";
 import { db } from "../db/index.js";
@@ -36,6 +36,7 @@ router.get("/", requireAdmin, async (_req, res) => {
       appId: a.app_id,
       releaseCount: a.release_count,
       lastRelease: a.last_release,
+      createdAt: a.app_created_at,
     }))
   );
 });
@@ -98,6 +99,9 @@ router.post("/:appId/releases", requireAdmin, upload.single("file"), async (req,
   }
 
   try {
+    // 确保应用存在于 apps 表中
+    await db.upsertApp(appId);
+
     await db.insertRelease({
       appId,
       version,
@@ -165,6 +169,28 @@ router.delete("/:appId/releases/:version", requireAdmin, async (req, res) => {
   await db.deleteRelease({ appId, version, platform });
 
   res.json({ message: "Release deleted" });
+});
+
+// ─── Admin: Delete an app ────────────────────────────────────────────────────
+router.delete("/:appId", requireAdmin, async (req, res) => {
+  const { appId } = req.params;
+
+  // Check if app exists
+  const app = await db.getApp(appId);
+  if (!app) {
+    return res.status(404).json({ error: "App not found" });
+  }
+
+  // Delete all files for this app
+  const dirPath = join(config.uploadDir, appId);
+  if (existsSync(dirPath)) {
+    rmSync(dirPath, { recursive: true, force: true });
+  }
+
+  // Delete from database
+  await db.deleteApp(appId);
+
+  res.json({ message: "App deleted" });
 });
 
 export default router;

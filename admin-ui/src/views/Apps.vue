@@ -1,13 +1,13 @@
 <script setup>
 import { ref, onMounted } from "vue";
-import { fetchApps } from "../composables/api.js";
+import { fetchApps, deleteApp } from "../composables/api.js";
 
 const apps = ref([]);
 const loading = ref(true);
 const newAppId = ref("");
 const showNewApp = ref(false);
 
-onMounted(async () => {
+const loadApps = async () => {
   try {
     apps.value = await fetchApps();
   } catch {
@@ -15,7 +15,21 @@ onMounted(async () => {
   } finally {
     loading.value = false;
   }
-});
+};
+
+onMounted(loadApps);
+
+async function handleDelete(appId) {
+  if (!confirm(`确定要删除应用 ${appId} 及其所有版本吗？此操作不可恢复！`)) {
+    return;
+  }
+  try {
+    await deleteApp(appId);
+    await loadApps();
+  } catch (err) {
+    alert("删除失败：" + err.message);
+  }
+}
 
 function formatDate(dateStr) {
   if (!dateStr) return "-";
@@ -80,22 +94,26 @@ function formatDate(dateStr) {
       </div>
 
       <div class="apps-grid">
-        <router-link
+        <div
           v-for="app in apps"
           :key="app.appId"
-          :to="`/apps/${app.appId}`"
           class="app-card card"
         >
-          <div class="app-icon">{{ app.appId.charAt(0).toUpperCase() }}</div>
-          <div class="app-info">
-            <div class="app-name">{{ app.appId }}</div>
-            <div class="app-meta">
-              {{ app.releaseCount }} 个版本 · 最近更新
-              {{ formatDate(app.lastRelease) }}
+          <router-link :to="`/apps/${app.appId}`" class="app-card-link">
+            <div class="app-icon">{{ app.appId.charAt(0).toUpperCase() }}</div>
+            <div class="app-info">
+              <div class="app-name">{{ app.appId }}</div>
+              <div class="app-meta">
+                {{ app.releaseCount }} 个版本 · 添加于 {{ formatDate(app.createdAt) }} · 最近更新
+                {{ formatDate(app.lastRelease) }}
+              </div>
             </div>
-          </div>
-          <div class="app-arrow">→</div>
-        </router-link>
+            <div class="app-arrow">→</div>
+          </router-link>
+          <button class="btn btn-outline btn-sm delete-btn" @click="handleDelete(app.appId)">
+            删除
+          </button>
+        </div>
       </div>
     </template>
   </div>
@@ -111,18 +129,42 @@ function formatDate(dateStr) {
 .app-card {
   display: flex;
   align-items: center;
-  gap: 16px;
   padding: 18px 20px;
-  text-decoration: none;
-  color: inherit;
   transition:
     border-color 0.15s,
     box-shadow 0.15s;
+  position: relative;
+}
+
+.app-card-link {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  text-decoration: none;
+  color: inherit;
+  flex: 1;
 }
 
 .app-card:hover {
   border-color: var(--primary);
   box-shadow: 0 2px 8px rgba(59, 91, 219, 0.08);
+}
+
+.delete-btn {
+  margin-left: 16px;
+  color: #fa5252;
+  border-color: #fa5252;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.delete-btn:hover {
+  background: #fa5252;
+  color: white;
+}
+
+.app-card:hover .delete-btn {
+  opacity: 1;
 }
 
 .app-icon {

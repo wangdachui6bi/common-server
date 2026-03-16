@@ -49,6 +49,10 @@ export function deleteRelease(appId, version, platform) {
   );
 }
 
+export function deleteApp(appId) {
+  return request(`/api/apps/${appId}`, { method: "DELETE" });
+}
+
 export async function uploadRelease(appId, form) {
   const res = await fetch(`${BASE}/api/apps/${appId}/releases`, {
     method: "POST",
