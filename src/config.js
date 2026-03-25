@@ -4,6 +4,7 @@ import { resolve } from "path";
 export const config = {
   port: parseInt(process.env.PORT || "3600", 10),
   adminApiKey: process.env.ADMIN_API_KEY || "change-me",
+  syncToken: process.env.SYNC_API_TOKEN || "",
   uploadDir: resolve(process.env.UPLOAD_DIR || "./uploads"),
   baseUrl: process.env.BASE_URL || "http://localhost:3600",
   mysql: {

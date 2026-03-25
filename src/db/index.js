@@ -35,6 +35,22 @@ export async function initDB() {
       INDEX idx_app_platform (app_id, platform, created_at DESC)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS synced_todos (
+      namespace_key VARCHAR(120) NOT NULL,
+      todo_id       VARCHAR(120) NOT NULL,
+      text          TEXT         NOT NULL,
+      completed     TINYINT      NOT NULL DEFAULT 0,
+      deleted       TINYINT      NOT NULL DEFAULT 0,
+      created_at_ms BIGINT       NOT NULL,
+      updated_at_ms BIGINT       NOT NULL,
+      deleted_at_ms BIGINT       NULL,
+      source_app    VARCHAR(100) NOT NULL DEFAULT '',
+      PRIMARY KEY (namespace_key, todo_id),
+      INDEX idx_synced_todos_namespace_updated (namespace_key, updated_at_ms DESC)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
 }
 
 export const db = {
@@ -122,6 +138,50 @@ export const db = {
     // Delete the app
     const [result] = await pool.execute(`DELETE FROM apps WHERE app_id = ?`, [appId]);
     return result;
+  },
+
+  async getSyncedTodo({ namespace, todoId }) {
+    const [rows] = await pool.execute(
+      `SELECT * FROM synced_todos WHERE namespace_key = ? AND todo_id = ? LIMIT 1`,
+      [namespace, todoId]
+    );
+    return rows[0] || null;
+  },
+
+  async upsertSyncedTodo({
+    namespace,
+    todoId,
+    text,
+    completed,
+    deleted,
+    createdAtMs,
+    updatedAtMs,
+    deletedAtMs,
+    sourceApp,
+  }) {
+    const [result] = await pool.execute(
+      `INSERT INTO synced_todos
+        (namespace_key, todo_id, text, completed, deleted, created_at_ms, updated_at_ms, deleted_at_ms, source_app)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+        text = VALUES(text),
+        completed = VALUES(completed),
+        deleted = VALUES(deleted),
+        created_at_ms = VALUES(created_at_ms),
+        updated_at_ms = VALUES(updated_at_ms),
+        deleted_at_ms = VALUES(deleted_at_ms),
+        source_app = VALUES(source_app)`,
+      [namespace, todoId, text, completed, deleted, createdAtMs, updatedAtMs, deletedAtMs, sourceApp]
+    );
+    return result;
+  },
+
+  async listSyncedTodos(namespace) {
+    const [rows] = await pool.execute(
+      `SELECT * FROM synced_todos WHERE namespace_key = ? ORDER BY updated_at_ms DESC`,
+      [namespace]
+    );
+    return rows;
   },
 };
 

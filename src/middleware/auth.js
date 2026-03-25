@@ -10,3 +10,23 @@ export function requireAdmin(req, res, next) {
   }
   next();
 }
+
+export function requireSyncToken(req, res, next) {
+  const bearer = req.headers.authorization?.startsWith("Bearer ")
+    ? req.headers.authorization.slice(7)
+    : null;
+  const key =
+    req.headers["x-sync-token"] ||
+    req.query.sync_token ||
+    bearer;
+
+  if (!config.syncToken) {
+    return res.status(503).json({ error: "Sync token is not configured on server" });
+  }
+
+  if (!key || key !== config.syncToken) {
+    return res.status(401).json({ error: "Unauthorized: invalid sync token" });
+  }
+
+  next();
+}

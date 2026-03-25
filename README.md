@@ -18,7 +18,7 @@
 
 ```bash
 cp .env.example .env
-# 编辑 .env 中的 ADMIN_API_KEY 和 BASE_URL
+# 编辑 .env 中的 ADMIN_API_KEY、SYNC_API_TOKEN 和 BASE_URL
 npm install
 npm run dev
 ```
@@ -29,6 +29,7 @@ npm run dev
 cp .env.example .env
 # 编辑 .env：
 #   ADMIN_API_KEY=你的密钥
+#   SYNC_API_TOKEN=给移动端/其他项目同步待办使用的密钥
 #   BASE_URL=https://your-domain.com
 
 docker compose up -d --build
@@ -92,6 +93,40 @@ curl https://your-domain.com/api/apps/tool-app/releases?limit=20&offset=0 \
 curl -X DELETE https://your-domain.com/api/apps/tool-app/releases/1.0.5?platform=android \
   -H "X-API-Key: your-admin-key"
 ```
+
+### 待办同步接口（需要 Sync Token）
+
+同步接口和版本管理接口分开鉴权，请在请求头里带 `X-Sync-Token`，不要把管理员 `X-API-Key` 暴露给客户端。
+
+#### 拉取当前待办列表
+
+```bash
+curl "https://your-domain.com/api/sync/todos" \
+  -H "X-Sync-Token: your-sync-token"
+```
+
+#### 合并并同步待办
+
+```bash
+curl -X POST "https://your-domain.com/api/sync/todos/sync" \
+  -H "Content-Type: application/json" \
+  -H "X-Sync-Token: your-sync-token" \
+  -d '{
+    "sourceApp": "tool-app",
+    "items": [
+      {
+        "id": "todo_1",
+        "text": "晚上买牛奶",
+        "completed": false,
+        "createdAt": "2026-03-25T10:00:00.000Z",
+        "updatedAt": "2026-03-25T10:00:00.000Z",
+        "deletedAt": null
+      }
+    ]
+  }'
+```
+
+服务端会按 `updatedAt` 做最后写入优先合并，并返回当前完整待办列表。多个项目只要共用同一个 `SYNC_API_TOKEN`，就会同步到同一套待办数据。
 
 ## 多应用接入
 

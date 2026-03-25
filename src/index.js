@@ -7,6 +7,7 @@ import { fileURLToPath } from "url";
 import { config } from "./config.js";
 import { initDB } from "./db/index.js";
 import releasesRouter from "./routes/releases.js";
+import todoSyncRouter from "./routes/todoSync.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -20,6 +21,7 @@ app.get("/health", (_req, res) => {
 });
 
 app.use("/api/apps", releasesRouter);
+app.use("/api/sync", todoSyncRouter);
 
 const adminDist = resolve(__dirname, "../admin-ui/dist");
 if (existsSync(adminDist)) {
