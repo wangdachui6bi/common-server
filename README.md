@@ -105,10 +105,49 @@ curl "https://your-domain.com/api/sync/todos" \
   -H "X-Sync-Token: your-sync-token"
 ```
 
-#### 合并并同步待办
+#### 新增待办
 
 ```bash
-curl -X POST "https://your-domain.com/api/sync/todos/sync" \
+curl -X POST "https://your-domain.com/api/sync/todos" \
+  -H "Content-Type: application/json" \
+  -H "X-Sync-Token: your-sync-token" \
+  -d '{
+    "id": "todo_1",
+    "text": "晚上买牛奶",
+    "completed": false,
+    "createdAt": "2026-03-25T10:00:00.000Z",
+    "sourceApp": "tool-app",
+    "updatedAt": "2026-03-25T10:00:00.000Z"
+  }'
+```
+
+#### 更新待办状态
+
+```bash
+curl -X PATCH "https://your-domain.com/api/sync/todos/todo_1" \
+  -H "Content-Type: application/json" \
+  -H "X-Sync-Token: your-sync-token" \
+  -d '{
+    "completed": true,
+    "sourceApp": "tool-app"
+  }'
+```
+
+#### 删除待办
+
+```bash
+curl -X DELETE "https://your-domain.com/api/sync/todos/todo_1" \
+  -H "Content-Type: application/json" \
+  -H "X-Sync-Token: your-sync-token" \
+  -d '{
+    "sourceApp": "tool-app"
+  }'
+```
+
+#### 历史待办导入
+
+```bash
+curl -X POST "https://your-domain.com/api/sync/todos/import" \
   -H "Content-Type: application/json" \
   -H "X-Sync-Token: your-sync-token" \
   -d '{
@@ -126,7 +165,7 @@ curl -X POST "https://your-domain.com/api/sync/todos/sync" \
   }'
 ```
 
-服务端会按 `updatedAt` 做最后写入优先合并，并返回当前完整待办列表。多个项目只要共用同一个 `SYNC_API_TOKEN`，就会同步到同一套待办数据。
+现在待办接口是服务端主数据模式：新增、完成、删除都直接落数据库；`/import` 只用于第一次把旧本地数据补传上云。多个项目只要共用同一个 `SYNC_API_TOKEN`，就会操作同一套待办数据。
 
 ## 多应用接入
 

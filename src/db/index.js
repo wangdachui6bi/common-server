@@ -41,6 +41,7 @@ export async function initDB() {
       namespace_key VARCHAR(120) NOT NULL,
       todo_id       VARCHAR(120) NOT NULL,
       text          TEXT         NOT NULL,
+      extra_json    MEDIUMTEXT   NULL,
       completed     TINYINT      NOT NULL DEFAULT 0,
       deleted       TINYINT      NOT NULL DEFAULT 0,
       created_at_ms BIGINT       NOT NULL,
@@ -51,6 +52,19 @@ export async function initDB() {
       INDEX idx_synced_todos_namespace_updated (namespace_key, updated_at_ms DESC)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
+
+  const [columns] = await pool.execute(
+    `SELECT COLUMN_NAME
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = ?
+       AND TABLE_NAME = 'synced_todos'
+       AND COLUMN_NAME = 'extra_json'`,
+    [config.mysql.database]
+  );
+
+  if (!Array.isArray(columns) || columns.length === 0) {
+    await pool.execute(`ALTER TABLE synced_todos ADD COLUMN extra_json MEDIUMTEXT NULL AFTER text`);
+  }
 }
 
 export const db = {
@@ -152,6 +166,7 @@ export const db = {
     namespace,
     todoId,
     text,
+    extraJson,
     completed,
     deleted,
     createdAtMs,
@@ -161,25 +176,30 @@ export const db = {
   }) {
     const [result] = await pool.execute(
       `INSERT INTO synced_todos
-        (namespace_key, todo_id, text, completed, deleted, created_at_ms, updated_at_ms, deleted_at_ms, source_app)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (namespace_key, todo_id, text, extra_json, completed, deleted, created_at_ms, updated_at_ms, deleted_at_ms, source_app)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
         text = VALUES(text),
+        extra_json = VALUES(extra_json),
         completed = VALUES(completed),
         deleted = VALUES(deleted),
         created_at_ms = VALUES(created_at_ms),
         updated_at_ms = VALUES(updated_at_ms),
         deleted_at_ms = VALUES(deleted_at_ms),
         source_app = VALUES(source_app)`,
-      [namespace, todoId, text, completed, deleted, createdAtMs, updatedAtMs, deletedAtMs, sourceApp]
+      [namespace, todoId, text, extraJson, completed, deleted, createdAtMs, updatedAtMs, deletedAtMs, sourceApp]
     );
     return result;
   },
 
-  async listSyncedTodos(namespace) {
+  async listSyncedTodos(namespace, options = {}) {
+    const { includeDeleted = false } = options;
     const [rows] = await pool.execute(
-      `SELECT * FROM synced_todos WHERE namespace_key = ? ORDER BY updated_at_ms DESC`,
-      [namespace]
+      `SELECT * FROM synced_todos
+       WHERE namespace_key = ?
+         AND (? = 1 OR deleted = 0)
+       ORDER BY updated_at_ms DESC`,
+      [namespace, includeDeleted ? 1 : 0]
     );
     return rows;
   },
