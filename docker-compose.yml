@@ -15,6 +15,7 @@ services:
       - MYSQL_USER=${MYSQL_USER:-root}
       - MYSQL_PASSWORD=${MYSQL_PASSWORD}
       - MYSQL_DATABASE=${MYSQL_DATABASE:-appdb}
+      - SYNC_API_TOKEN=${SYNC_API_TOKEN}
     volumes:
       - /data/common-server/uploads:/app/uploads
     networks:
