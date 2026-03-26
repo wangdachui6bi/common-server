@@ -1,4 +1,3 @@
-import dayjs from "dayjs";
 import { db } from "../db/index.js";
 
 const DEFAULT_NAMESPACE = "default";
@@ -63,7 +62,7 @@ function buildTodoLines(rows) {
       medium: "中优先",
       low: "低优先",
     };
-    const date = String(meta.date || dayjs(Number(row.created_at_ms)).format("YYYY-MM-DD"));
+    const date = String(meta.date || new Intl.DateTimeFormat("en-CA", { timeZone: SHANGHAI_TIMEZONE }).format(new Date(Number(row.created_at_ms))));
     const time = String(meta.time || "").trim();
     const priority = priorityMap[String(meta.priority || "medium")] || "中优先";
     return `${index + 1}. ${row.text}\n日期：${date}${time ? ` ${time}` : ""}｜优先级：${priority}`;
