@@ -8,6 +8,7 @@ import { config } from "./config.js";
 import { initDB } from "./db/index.js";
 import releasesRouter from "./routes/releases.js";
 import todoSyncRouter from "./routes/todoSync.js";
+import { startFeishuReminderScheduler } from "./services/feishuReminder.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -46,6 +47,7 @@ app.use((err, _req, res, _next) => {
 
 initDB()
   .then(() => {
+    startFeishuReminderScheduler();
     app.listen(config.port, "0.0.0.0", () => {
       console.log(`Update server running on http://0.0.0.0:${config.port}`);
       console.log(`Admin API key: ${config.adminApiKey.slice(0, 4)}****`);

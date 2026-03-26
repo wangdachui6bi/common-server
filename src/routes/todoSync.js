@@ -1,6 +1,11 @@
 import { Router } from "express";
 import { db } from "../db/index.js";
 import { requireSyncToken } from "../middleware/auth.js";
+import {
+  checkFeishuTodoReminders,
+  getFeishuTodoSettings,
+  saveFeishuTodoSettings,
+} from "../services/feishuReminder.js";
 
 const router = Router();
 const DEFAULT_NAMESPACE = "default";
@@ -219,5 +224,29 @@ router.post("/todos/clear-completed", requireSyncToken, async (req, res) => {
 
 router.post("/todos/import", requireSyncToken, importTodos);
 router.post("/todos/sync", requireSyncToken, importTodos);
+
+router.get("/feishu/settings", requireSyncToken, async (_req, res) => {
+  const settings = await getFeishuTodoSettings(DEFAULT_NAMESPACE);
+  res.json({
+    settings,
+    serverTime: new Date().toISOString(),
+  });
+});
+
+router.put("/feishu/settings", requireSyncToken, async (req, res) => {
+  const settings = await saveFeishuTodoSettings(req.body || {}, DEFAULT_NAMESPACE);
+  res.json({
+    settings,
+    serverTime: new Date().toISOString(),
+  });
+});
+
+router.post("/feishu/check", requireSyncToken, async (_req, res) => {
+  const result = await checkFeishuTodoReminders(DEFAULT_NAMESPACE);
+  res.json({
+    ...result,
+    serverTime: new Date().toISOString(),
+  });
+});
 
 export default router;

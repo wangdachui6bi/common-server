@@ -53,6 +53,26 @@ export async function initDB() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS sync_settings (
+      namespace_key VARCHAR(120) NOT NULL,
+      setting_key   VARCHAR(120) NOT NULL,
+      value_json    MEDIUMTEXT   NOT NULL,
+      updated_at_ms BIGINT       NOT NULL,
+      PRIMARY KEY (namespace_key, setting_key)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS todo_reminder_logs (
+      namespace_key VARCHAR(120) NOT NULL,
+      reminder_key  VARCHAR(191) NOT NULL,
+      sent_at_ms    BIGINT       NOT NULL,
+      PRIMARY KEY (namespace_key, reminder_key),
+      INDEX idx_todo_reminder_logs_sent (namespace_key, sent_at_ms DESC)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
   const [columns] = await pool.execute(
     `SELECT COLUMN_NAME
      FROM INFORMATION_SCHEMA.COLUMNS
@@ -202,6 +222,45 @@ export const db = {
       [namespace, includeDeleted ? 1 : 0]
     );
     return rows;
+  },
+
+  async getSyncSetting({ namespace, settingKey }) {
+    const [rows] = await pool.execute(
+      `SELECT * FROM sync_settings WHERE namespace_key = ? AND setting_key = ? LIMIT 1`,
+      [namespace, settingKey]
+    );
+    return rows[0] || null;
+  },
+
+  async upsertSyncSetting({ namespace, settingKey, valueJson, updatedAtMs }) {
+    const [result] = await pool.execute(
+      `INSERT INTO sync_settings (namespace_key, setting_key, value_json, updated_at_ms)
+       VALUES (?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+        value_json = VALUES(value_json),
+        updated_at_ms = VALUES(updated_at_ms)`,
+      [namespace, settingKey, valueJson, updatedAtMs]
+    );
+    return result;
+  },
+
+  async getReminderLog({ namespace, reminderKey }) {
+    const [rows] = await pool.execute(
+      `SELECT * FROM todo_reminder_logs WHERE namespace_key = ? AND reminder_key = ? LIMIT 1`,
+      [namespace, reminderKey]
+    );
+    return rows[0] || null;
+  },
+
+  async upsertReminderLog({ namespace, reminderKey, sentAtMs }) {
+    const [result] = await pool.execute(
+      `INSERT INTO todo_reminder_logs (namespace_key, reminder_key, sent_at_ms)
+       VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+        sent_at_ms = VALUES(sent_at_ms)`,
+      [namespace, reminderKey, sentAtMs]
+    );
+    return result;
   },
 };
 
