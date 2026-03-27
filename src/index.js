@@ -34,14 +34,6 @@ if (existsSync(adminDist)) {
   });
 }
 
-const menuDist = resolve(__dirname, "../../menu-app/menu-app/dist");
-if (existsSync(menuDist)) {
-  app.use("/menu", express.static(menuDist));
-  app.get("/menu/*", (_req, res) => {
-    res.sendFile(resolve(menuDist, "index.html"));
-  });
-}
-
 app.get("/", (_req, res) => {
   res.redirect("/admin/");
 });
