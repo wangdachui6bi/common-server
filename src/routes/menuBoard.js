@@ -443,6 +443,29 @@ router.patch("/requests/:id", async (req, res) => {
   await sendState(res);
 });
 
+router.delete("/requests/:id", async (req, res) => {
+  const requestId = String(req.params.id || "").trim();
+  const existing = await fetchOne(`SELECT * FROM couple_menu_requests WHERE request_id = ? LIMIT 1`, [requestId]);
+  if (!existing) {
+    return res.status(404).json({ error: "Request not found" });
+  }
+
+  const actor = normalizeActor(req.body?.actor || "未署名");
+  await pool.execute(`DELETE FROM couple_menu_requests WHERE request_id = ?`, [requestId]);
+  await pool.execute(`DELETE FROM couple_menu_comments WHERE target_type = 'request' AND target_id = ?`, [requestId]);
+
+  await recordEvent({
+    eventType: "request_deleted",
+    entityType: "request",
+    entityId: requestId,
+    summary: `${actor} 删除了点单「${existing.dish_name}」`,
+    payload: { actor, dishName: existing.dish_name },
+  });
+
+  broadcastRefresh("request_deleted");
+  await sendState(res);
+});
+
 router.post("/comments", async (req, res) => {
   const actor = normalizeActor(req.body.actor);
   const targetType = String(req.body.targetType || "").trim();
