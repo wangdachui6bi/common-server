@@ -30,3 +30,24 @@ export function requireSyncToken(req, res, next) {
 
   next();
 }
+
+export function requireMenuAccess(req, res, next) {
+  if (!config.menuBoardToken) {
+    next();
+    return;
+  }
+
+  const bearer = req.headers.authorization?.startsWith("Bearer ")
+    ? req.headers.authorization.slice(7)
+    : null;
+  const key =
+    req.headers["x-menu-token"] ||
+    req.query.menu_token ||
+    bearer;
+
+  if (!key || key !== config.menuBoardToken) {
+    return res.status(401).json({ error: "Unauthorized: invalid menu token" });
+  }
+
+  next();
+}

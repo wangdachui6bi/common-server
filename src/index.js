@@ -8,6 +8,7 @@ import { config } from "./config.js";
 import { initDB } from "./db/index.js";
 import releasesRouter from "./routes/releases.js";
 import todoSyncRouter from "./routes/todoSync.js";
+import menuBoardRouter from "./routes/menuBoard.js";
 import { startFeishuReminderScheduler } from "./services/feishuReminder.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -15,7 +16,7 @@ const app = express();
 
 app.use(cors());
 app.use(morgan("short"));
-app.use(express.json());
+app.use(express.json({ limit: "12mb" }));
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
@@ -23,12 +24,21 @@ app.get("/health", (_req, res) => {
 
 app.use("/api/apps", releasesRouter);
 app.use("/api/sync", todoSyncRouter);
+app.use("/api/menu", menuBoardRouter);
 
 const adminDist = resolve(__dirname, "../admin-ui/dist");
 if (existsSync(adminDist)) {
   app.use("/admin", express.static(adminDist));
   app.get("/admin/*", (_req, res) => {
     res.sendFile(resolve(adminDist, "index.html"));
+  });
+}
+
+const menuDist = resolve(__dirname, "../../menu-app/menu-app/dist");
+if (existsSync(menuDist)) {
+  app.use("/menu", express.static(menuDist));
+  app.get("/menu/*", (_req, res) => {
+    res.sendFile(resolve(menuDist, "index.html"));
   });
 }
 

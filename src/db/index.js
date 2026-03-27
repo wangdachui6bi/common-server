@@ -85,6 +85,65 @@ export async function initDB() {
   if (!Array.isArray(columns) || columns.length === 0) {
     await pool.execute(`ALTER TABLE synced_todos ADD COLUMN extra_json MEDIUMTEXT NULL AFTER text`);
   }
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS couple_menu_dishes (
+      dish_id         VARCHAR(120)  NOT NULL PRIMARY KEY,
+      name            VARCHAR(120)  NOT NULL,
+      category        VARCHAR(80)   NOT NULL DEFAULT '',
+      description     TEXT          NOT NULL,
+      image_data      MEDIUMTEXT    NULL,
+      tags_json       MEDIUMTEXT    NULL,
+      source_type     VARCHAR(30)   NOT NULL DEFAULT 'custom',
+      created_by      VARCHAR(60)   NOT NULL DEFAULT '',
+      updated_by      VARCHAR(60)   NOT NULL DEFAULT '',
+      created_at_ms   BIGINT        NOT NULL,
+      updated_at_ms   BIGINT        NOT NULL,
+      INDEX idx_couple_menu_dishes_updated (updated_at_ms DESC),
+      INDEX idx_couple_menu_dishes_category (category)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS couple_menu_requests (
+      request_id      VARCHAR(120)  NOT NULL PRIMARY KEY,
+      dish_id         VARCHAR(120)  NULL,
+      dish_name       VARCHAR(120)  NOT NULL,
+      request_type    VARCHAR(20)   NOT NULL DEFAULT 'wish',
+      note            TEXT          NOT NULL,
+      requested_by    VARCHAR(60)   NOT NULL DEFAULT '',
+      status          VARCHAR(20)   NOT NULL DEFAULT 'pending',
+      created_at_ms   BIGINT        NOT NULL,
+      updated_at_ms   BIGINT        NOT NULL,
+      INDEX idx_couple_menu_requests_updated (updated_at_ms DESC),
+      INDEX idx_couple_menu_requests_status (status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS couple_menu_comments (
+      comment_id      VARCHAR(120)  NOT NULL PRIMARY KEY,
+      target_type     VARCHAR(20)   NOT NULL,
+      target_id       VARCHAR(120)  NOT NULL,
+      content         TEXT          NOT NULL,
+      author          VARCHAR(60)   NOT NULL DEFAULT '',
+      created_at_ms   BIGINT        NOT NULL,
+      INDEX idx_couple_menu_comments_target (target_type, target_id, created_at_ms DESC)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS couple_menu_events (
+      id              BIGINT        NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      event_type      VARCHAR(40)   NOT NULL,
+      entity_type     VARCHAR(30)   NOT NULL,
+      entity_id       VARCHAR(120)  NOT NULL,
+      summary         VARCHAR(255)  NOT NULL,
+      payload_json    MEDIUMTEXT    NULL,
+      created_at_ms   BIGINT        NOT NULL,
+      INDEX idx_couple_menu_events_created (created_at_ms DESC)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
 }
 
 export const db = {
