@@ -12,6 +12,10 @@ const defaultFeishuSettings = {
   autoEnabled: false,
 };
 
+function pad2(value) {
+  return String(value).padStart(2, "0");
+}
+
 function parseJson(value, fallback) {
   if (!value || typeof value !== "string") {
     return fallback;
@@ -50,22 +54,64 @@ function getShanghaiNowParts(now = new Date()) {
   };
 }
 
+function formatShanghaiDateFromTimestamp(timestamp) {
+  return getShanghaiNowParts(new Date(Number(timestamp) || Date.now())).date;
+}
+
+function normalizeTodoDate(value, fallbackTimestamp) {
+  const text = String(value || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    return text;
+  }
+
+  if (text) {
+    const parsed = new Date(text);
+    if (!Number.isNaN(parsed.getTime())) {
+      return getShanghaiNowParts(parsed).date;
+    }
+  }
+
+  return formatShanghaiDateFromTimestamp(fallbackTimestamp);
+}
+
+function normalizeTodoTime(value) {
+  const match = String(value || "").trim().match(/^(\d{1,2}):(\d{1,2})/);
+  if (!match) {
+    return "";
+  }
+
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return "";
+  }
+
+  return `${pad2(hour)}:${pad2(minute)}`;
+}
+
+function getTodoSchedule(row) {
+  const meta = parseTodoMeta(row);
+  return {
+    date: normalizeTodoDate(meta.date, row.created_at_ms),
+    time: normalizeTodoTime(meta.time),
+    priority: String(meta.priority || "medium"),
+  };
+}
+
 function parseTodoMeta(row) {
   return parseJson(row.extra_json, null) || {};
 }
 
 function buildTodoLines(rows) {
   return rows.map((row, index) => {
-    const meta = parseTodoMeta(row);
+    const schedule = getTodoSchedule(row);
     const priorityMap = {
       high: "高优先",
       medium: "中优先",
       low: "低优先",
     };
-    const date = String(meta.date || new Intl.DateTimeFormat("en-CA", { timeZone: SHANGHAI_TIMEZONE }).format(new Date(Number(row.created_at_ms))));
-    const time = String(meta.time || "").trim();
-    const priority = priorityMap[String(meta.priority || "medium")] || "中优先";
-    return `${index + 1}. ${row.text}\n日期：${date}${time ? ` ${time}` : ""}｜优先级：${priority}`;
+    const priority = priorityMap[schedule.priority] || "中优先";
+    return `${index + 1}. ${row.text}\n日期：${schedule.date}${schedule.time ? ` ${schedule.time}` : ""}｜优先级：${priority}`;
   }).join("\n\n");
 }
 
@@ -125,48 +171,91 @@ export async function saveFeishuTodoSettings(settings, namespace = DEFAULT_NAMES
 export async function checkFeishuTodoReminders(namespace = DEFAULT_NAMESPACE) {
   const settings = await getFeishuTodoSettings(namespace);
   if (!settings.autoEnabled || !settings.webhook) {
-    return { sent: 0, items: [] };
+    return { sent: 0, dueSent: 0, summarySent: 0, dueItems: [], summaryItems: [] };
   }
 
   const shanghaiNow = getShanghaiNowParts();
-  if (
-    shanghaiNow.hour < DAILY_SUMMARY_HOUR ||
-    (shanghaiNow.hour === DAILY_SUMMARY_HOUR && shanghaiNow.minute < DAILY_SUMMARY_MINUTE)
-  ) {
-    return { sent: 0, items: [] };
-  }
-
-  const reminderKey = `daily-summary:${shanghaiNow.date}`;
-  const sent = await db.getReminderLog({ namespace, reminderKey });
-  if (sent) {
-    return { sent: 0, items: [] };
-  }
-
   const rows = await db.listSyncedTodos(namespace);
-  const dueRows = rows.filter((row) => {
-    if (row.deleted || row.completed) {
-      return false;
+  const activeRows = rows.filter((row) => !row.deleted && !row.completed);
+
+  const currentTimeKey = `${shanghaiNow.date} ${pad2(shanghaiNow.hour)}:${pad2(shanghaiNow.minute)}`;
+  const dueCandidates = [];
+  for (const row of activeRows) {
+    const schedule = getTodoSchedule(row);
+    if (!schedule.time) {
+      continue;
     }
 
-    const meta = parseTodoMeta(row);
-    const date = String(meta.date || "").trim();
-    return date === shanghaiNow.date;
-  });
+    const dueTimeKey = `${schedule.date} ${schedule.time}`;
+    if (dueTimeKey > currentTimeKey) {
+      continue;
+    }
 
-  if (dueRows.length === 0) {
-    return { sent: 0, items: [] };
+    const reminderKey = `todo-due:${row.todo_id}:${schedule.date}:${schedule.time}`;
+    const sentLog = await db.getReminderLog({ namespace, reminderKey });
+    if (sentLog) {
+      continue;
+    }
+
+    dueCandidates.push({ row, reminderKey });
   }
 
-  await sendFeishuBotMessage({
-    webhook: settings.webhook,
-    title: "今日待办摘要",
-    text: buildTodoLines(dueRows),
-  });
+  let dueSent = 0;
+  const dueItems = [];
+  if (dueCandidates.length > 0) {
+    const dueRows = dueCandidates.map((item) => item.row);
+    await sendFeishuBotMessage({
+      webhook: settings.webhook,
+      title: dueRows.length === 1 ? "待办到时间了" : "有几条待办到时间了",
+      text: buildTodoLines(dueRows),
+    });
 
-  const sentAtMs = Date.now();
-  await db.upsertReminderLog({ namespace, reminderKey, sentAtMs });
+    const sentAtMs = Date.now();
+    await Promise.all(
+      dueCandidates.map((item) => db.upsertReminderLog({
+        namespace,
+        reminderKey: item.reminderKey,
+        sentAtMs,
+      }))
+    );
+    dueSent = dueRows.length;
+    dueItems.push(...dueRows.map((row) => row.todo_id));
+  }
 
-  return { sent: dueRows.length, items: dueRows.map((row) => row.todo_id) };
+  let summarySent = 0;
+  const summaryItems = [];
+  const afterSummaryTime = (
+    shanghaiNow.hour > DAILY_SUMMARY_HOUR ||
+    (shanghaiNow.hour === DAILY_SUMMARY_HOUR && shanghaiNow.minute >= DAILY_SUMMARY_MINUTE)
+  );
+
+  if (afterSummaryTime) {
+    const reminderKey = `daily-summary:${shanghaiNow.date}`;
+    const sent = await db.getReminderLog({ namespace, reminderKey });
+    if (!sent) {
+      const todayRows = activeRows.filter((row) => getTodoSchedule(row).date === shanghaiNow.date);
+      if (todayRows.length > 0) {
+        await sendFeishuBotMessage({
+          webhook: settings.webhook,
+          title: "今日待办摘要",
+          text: buildTodoLines(todayRows),
+        });
+
+        const sentAtMs = Date.now();
+        await db.upsertReminderLog({ namespace, reminderKey, sentAtMs });
+        summarySent = todayRows.length;
+        summaryItems.push(...todayRows.map((row) => row.todo_id));
+      }
+    }
+  }
+
+  return {
+    sent: dueSent + summarySent,
+    dueSent,
+    summarySent,
+    dueItems,
+    summaryItems,
+  };
 }
 
 export function startFeishuReminderScheduler(namespace = DEFAULT_NAMESPACE) {
@@ -174,7 +263,9 @@ export function startFeishuReminderScheduler(namespace = DEFAULT_NAMESPACE) {
     try {
       const result = await checkFeishuTodoReminders(namespace);
       if (result.sent > 0) {
-        console.log(`[feishu-reminder] sent ${result.sent} reminders`);
+        console.log(
+          `[feishu-reminder] sent total=${result.sent}, due=${result.dueSent}, summary=${result.summarySent}`
+        );
       }
     } catch (error) {
       console.error("[feishu-reminder] scheduler failed", error);
