@@ -321,6 +321,25 @@ export const db = {
     );
     return result;
   },
+
+  async listReminderLogs({ namespace, reminderKeys }) {
+    const keys = Array.isArray(reminderKeys)
+      ? reminderKeys.filter((item) => typeof item === "string" && item)
+      : [];
+
+    if (keys.length === 0) {
+      return [];
+    }
+
+    const placeholders = keys.map(() => "?").join(", ");
+    const [rows] = await pool.execute(
+      `SELECT * FROM todo_reminder_logs
+       WHERE namespace_key = ?
+         AND reminder_key IN (${placeholders})`,
+      [namespace, ...keys]
+    );
+    return rows;
+  },
 };
 
 export default pool;

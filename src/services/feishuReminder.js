@@ -1,4 +1,5 @@
 import { db } from "../db/index.js";
+import { postFeishuTextMessage } from "./feishuWebhook.js";
 
 const DEFAULT_NAMESPACE = "default";
 const FEISHU_SETTINGS_KEY = "feishu_todo_settings";
@@ -116,32 +117,24 @@ function buildTodoLines(rows) {
 }
 
 async function sendFeishuBotMessage({ webhook, title, text }) {
-  const response = await fetch(webhook, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      msg_type: "text",
-      content: {
-        text: `${title}\n${text}`,
-      },
-    }),
+  await postFeishuTextMessage({
+    webhook,
+    text: `${title}\n${text}`,
   });
+}
 
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(body || `飞书机器人请求失败: ${response.status}`);
-  }
+function buildReminderKey(todoId, date, time) {
+  return `todo-due:${todoId}:${date}:${time}`;
+}
 
-  const data = await response.json();
-  if (data?.StatusCode && data.StatusCode !== 0) {
-    throw new Error(data?.StatusMessage || "飞书机器人返回失败");
-  }
-
-  if (typeof data?.code === "number" && data.code !== 0) {
-    throw new Error(data?.msg || "飞书机器人返回失败");
-  }
+function sortRowsBySchedule(rows) {
+  return [...rows].sort((left, right) => {
+    const leftSchedule = getTodoSchedule(left);
+    const rightSchedule = getTodoSchedule(right);
+    const leftKey = `${leftSchedule.date} ${leftSchedule.time || "99:99"} ${left.todo_id}`;
+    const rightKey = `${rightSchedule.date} ${rightSchedule.time || "99:99"} ${right.todo_id}`;
+    return leftKey.localeCompare(rightKey);
+  });
 }
 
 export async function getFeishuTodoSettings(namespace = DEFAULT_NAMESPACE) {
@@ -171,7 +164,14 @@ export async function saveFeishuTodoSettings(settings, namespace = DEFAULT_NAMES
 export async function checkFeishuTodoReminders(namespace = DEFAULT_NAMESPACE) {
   const settings = await getFeishuTodoSettings(namespace);
   if (!settings.autoEnabled || !settings.webhook) {
-    return { sent: 0, dueSent: 0, summarySent: 0, dueItems: [], summaryItems: [] };
+    return {
+      sent: 0,
+      dueSent: 0,
+      summarySent: 0,
+      dueItems: [],
+      summaryItems: [],
+      checkedAt: new Date().toISOString(),
+    };
   }
 
   const shanghaiNow = getShanghaiNowParts();
@@ -191,19 +191,24 @@ export async function checkFeishuTodoReminders(namespace = DEFAULT_NAMESPACE) {
       continue;
     }
 
-    const reminderKey = `todo-due:${row.todo_id}:${schedule.date}:${schedule.time}`;
-    const sentLog = await db.getReminderLog({ namespace, reminderKey });
-    if (sentLog) {
-      continue;
-    }
-
-    dueCandidates.push({ row, reminderKey });
+    dueCandidates.push({
+      row,
+      reminderKey: buildReminderKey(row.todo_id, schedule.date, schedule.time),
+    });
   }
+
+  const summaryReminderKey = `daily-summary:${shanghaiNow.date}`;
+  const reminderLogRows = await db.listReminderLogs({
+    namespace,
+    reminderKeys: [...dueCandidates.map((item) => item.reminderKey), summaryReminderKey],
+  });
+  const sentReminderKeys = new Set(reminderLogRows.map((row) => row.reminder_key));
+  const pendingDueCandidates = dueCandidates.filter((item) => !sentReminderKeys.has(item.reminderKey));
 
   let dueSent = 0;
   const dueItems = [];
-  if (dueCandidates.length > 0) {
-    const dueRows = dueCandidates.map((item) => item.row);
+  if (pendingDueCandidates.length > 0) {
+    const dueRows = sortRowsBySchedule(pendingDueCandidates.map((item) => item.row));
     await sendFeishuBotMessage({
       webhook: settings.webhook,
       title: dueRows.length === 1 ? "待办到时间了" : "有几条待办到时间了",
@@ -212,7 +217,7 @@ export async function checkFeishuTodoReminders(namespace = DEFAULT_NAMESPACE) {
 
     const sentAtMs = Date.now();
     await Promise.all(
-      dueCandidates.map((item) => db.upsertReminderLog({
+      pendingDueCandidates.map((item) => db.upsertReminderLog({
         namespace,
         reminderKey: item.reminderKey,
         sentAtMs,
@@ -229,23 +234,21 @@ export async function checkFeishuTodoReminders(namespace = DEFAULT_NAMESPACE) {
     (shanghaiNow.hour === DAILY_SUMMARY_HOUR && shanghaiNow.minute >= DAILY_SUMMARY_MINUTE)
   );
 
-  if (afterSummaryTime) {
-    const reminderKey = `daily-summary:${shanghaiNow.date}`;
-    const sent = await db.getReminderLog({ namespace, reminderKey });
-    if (!sent) {
-      const todayRows = activeRows.filter((row) => getTodoSchedule(row).date === shanghaiNow.date);
-      if (todayRows.length > 0) {
-        await sendFeishuBotMessage({
-          webhook: settings.webhook,
-          title: "今日待办摘要",
-          text: buildTodoLines(todayRows),
-        });
+  if (afterSummaryTime && !sentReminderKeys.has(summaryReminderKey)) {
+    const todayRows = sortRowsBySchedule(
+      activeRows.filter((row) => getTodoSchedule(row).date === shanghaiNow.date)
+    );
+    if (todayRows.length > 0) {
+      await sendFeishuBotMessage({
+        webhook: settings.webhook,
+        title: "今日待办摘要",
+        text: buildTodoLines(todayRows),
+      });
 
-        const sentAtMs = Date.now();
-        await db.upsertReminderLog({ namespace, reminderKey, sentAtMs });
-        summarySent = todayRows.length;
-        summaryItems.push(...todayRows.map((row) => row.todo_id));
-      }
+      const sentAtMs = Date.now();
+      await db.upsertReminderLog({ namespace, reminderKey: summaryReminderKey, sentAtMs });
+      summarySent = todayRows.length;
+      summaryItems.push(...todayRows.map((row) => row.todo_id));
     }
   }
 
@@ -255,6 +258,7 @@ export async function checkFeishuTodoReminders(namespace = DEFAULT_NAMESPACE) {
     summarySent,
     dueItems,
     summaryItems,
+    checkedAt: new Date().toISOString(),
   };
 }
 
