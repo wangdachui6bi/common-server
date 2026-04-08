@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { Router } from "express";
 import pool from "../db/index.js";
-import { requireMenuAccess } from "../middleware/auth.js";
+import { requireAuth, requireMenuPermission } from "../middleware/auth.js";
 import { notifyMenuUpdate } from "../services/menuNotifier.js";
 
 const router = Router();
@@ -43,6 +43,10 @@ function makeId(prefix) {
 function normalizeActor(value) {
   const actor = String(value || "").trim().slice(0, 60);
   return actor || "未署名";
+}
+
+function actorFromRequest(req) {
+  return normalizeActor(req.authUser?.displayName || req.body?.actor);
 }
 
 function serializeDish(row) {
@@ -161,7 +165,8 @@ function notifyAsync(title, lines) {
   });
 }
 
-router.use(requireMenuAccess);
+router.use(requireAuth);
+router.use(requireMenuPermission("menuView"));
 
 router.get("/bootstrap", async (_req, res) => {
   await sendState(res);
@@ -185,13 +190,13 @@ router.get("/events/stream", (req, res) => {
   });
 });
 
-router.post("/dishes", async (req, res) => {
+router.post("/dishes", requireMenuPermission("manageDishes"), async (req, res) => {
   const name = String(req.body.name || "").trim();
   if (!name) {
     return res.status(400).json({ error: "name is required" });
   }
 
-  const actor = normalizeActor(req.body.actor);
+  const actor = actorFromRequest(req);
   const timestamp = now();
   const dishId = makeId("dish");
   await pool.execute(
@@ -225,7 +230,7 @@ router.post("/dishes", async (req, res) => {
   await sendState(res);
 });
 
-router.put("/dishes/:id", async (req, res) => {
+router.put("/dishes/:id", requireMenuPermission("manageDishes"), async (req, res) => {
   const dishId = String(req.params.id || "").trim();
   const existing = await fetchOne(`SELECT * FROM couple_menu_dishes WHERE dish_id = ? LIMIT 1`, [dishId]);
   if (!existing) {
@@ -237,7 +242,7 @@ router.put("/dishes/:id", async (req, res) => {
     return res.status(400).json({ error: "name is required" });
   }
 
-  const actor = normalizeActor(req.body.actor || existing.updated_by);
+  const actor = actorFromRequest(req) || normalizeActor(existing.updated_by);
   await pool.execute(
     `UPDATE couple_menu_dishes
      SET name = ?, category = ?, description = ?, image_data = ?, tags_json = ?, source_type = ?, updated_by = ?, updated_at_ms = ?
@@ -273,14 +278,14 @@ router.put("/dishes/:id", async (req, res) => {
   await sendState(res);
 });
 
-router.delete("/dishes/:id", async (req, res) => {
+router.delete("/dishes/:id", requireMenuPermission("manageDishes"), async (req, res) => {
   const dishId = String(req.params.id || "").trim();
   const existing = await fetchOne(`SELECT * FROM couple_menu_dishes WHERE dish_id = ? LIMIT 1`, [dishId]);
   if (!existing) {
     return res.status(404).json({ error: "Dish not found" });
   }
 
-  const actor = normalizeActor(req.body?.actor || "未署名");
+  const actor = actorFromRequest(req);
   await pool.execute(`DELETE FROM couple_menu_dishes WHERE dish_id = ?`, [dishId]);
   await pool.execute(`DELETE FROM couple_menu_comments WHERE target_type = 'dish' AND target_id = ?`, [dishId]);
 
@@ -296,8 +301,8 @@ router.delete("/dishes/:id", async (req, res) => {
   await sendState(res);
 });
 
-router.post("/dishes/import", async (req, res) => {
-  const actor = normalizeActor(req.body.actor);
+router.post("/dishes/import", requireMenuPermission("manageDishes"), async (req, res) => {
+  const actor = actorFromRequest(req);
   const items = Array.isArray(req.body.items) ? req.body.items : [];
   const imported = [];
 
@@ -352,8 +357,8 @@ router.post("/dishes/import", async (req, res) => {
   await sendState(res);
 });
 
-router.post("/requests", async (req, res) => {
-  const actor = normalizeActor(req.body.actor);
+router.post("/requests", requireMenuPermission("submitRequest"), async (req, res) => {
+  const actor = actorFromRequest(req);
   const dishId = String(req.body.dishId || "").trim();
   let dishName = String(req.body.dishName || "").trim();
 
@@ -406,14 +411,14 @@ router.post("/requests", async (req, res) => {
   await sendState(res);
 });
 
-router.patch("/requests/:id", async (req, res) => {
+router.patch("/requests/:id", requireMenuPermission("manageRequests"), async (req, res) => {
   const requestId = String(req.params.id || "").trim();
   const existing = await fetchOne(`SELECT * FROM couple_menu_requests WHERE request_id = ? LIMIT 1`, [requestId]);
   if (!existing) {
     return res.status(404).json({ error: "Request not found" });
   }
 
-  const actor = normalizeActor(req.body.actor);
+  const actor = actorFromRequest(req);
   const nextStatus = String(req.body.status || existing.status).trim().slice(0, 20) || existing.status;
   const nextNote = Object.prototype.hasOwnProperty.call(req.body, "note")
     ? String(req.body.note || "").trim()
@@ -443,14 +448,14 @@ router.patch("/requests/:id", async (req, res) => {
   await sendState(res);
 });
 
-router.delete("/requests/:id", async (req, res) => {
+router.delete("/requests/:id", requireMenuPermission("manageRequests"), async (req, res) => {
   const requestId = String(req.params.id || "").trim();
   const existing = await fetchOne(`SELECT * FROM couple_menu_requests WHERE request_id = ? LIMIT 1`, [requestId]);
   if (!existing) {
     return res.status(404).json({ error: "Request not found" });
   }
 
-  const actor = normalizeActor(req.body?.actor || "未署名");
+  const actor = actorFromRequest(req);
   await pool.execute(`DELETE FROM couple_menu_requests WHERE request_id = ?`, [requestId]);
   await pool.execute(`DELETE FROM couple_menu_comments WHERE target_type = 'request' AND target_id = ?`, [requestId]);
 
@@ -466,8 +471,8 @@ router.delete("/requests/:id", async (req, res) => {
   await sendState(res);
 });
 
-router.post("/comments", async (req, res) => {
-  const actor = normalizeActor(req.body.actor);
+router.post("/comments", requireMenuPermission("comment"), async (req, res) => {
+  const actor = actorFromRequest(req);
   const targetType = String(req.body.targetType || "").trim();
   const targetId = String(req.body.targetId || "").trim();
   const content = String(req.body.content || "").trim();

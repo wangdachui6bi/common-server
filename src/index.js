@@ -6,10 +6,14 @@ import { existsSync } from "fs";
 import { fileURLToPath } from "url";
 import { config } from "./config.js";
 import { initDB } from "./db/index.js";
+import authRouter from "./routes/auth.js";
+import adminRouter from "./routes/admin.js";
 import releasesRouter from "./routes/releases.js";
 import todoSyncRouter from "./routes/todoSync.js";
 import menuBoardRouter from "./routes/menuBoard.js";
+import sharedGalleryRouter from "./routes/sharedGallery.js";
 import { startFeishuReminderScheduler } from "./services/feishuReminder.js";
+import { ensureMediaDirs } from "./services/mediaStorage.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -22,9 +26,12 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
+app.use("/api/auth", authRouter);
+app.use("/api/admin", adminRouter);
 app.use("/api/apps", releasesRouter);
 app.use("/api/sync", todoSyncRouter);
 app.use("/api/menu", menuBoardRouter);
+app.use("/api/gallery", sharedGalleryRouter);
 
 const adminDist = resolve(__dirname, "../admin-ui/dist");
 if (existsSync(adminDist)) {
@@ -48,6 +55,9 @@ app.use((err, _req, res, _next) => {
 });
 
 initDB()
+  .then(() => {
+    return ensureMediaDirs();
+  })
   .then(() => {
     startFeishuReminderScheduler();
     app.listen(config.port, "0.0.0.0", () => {

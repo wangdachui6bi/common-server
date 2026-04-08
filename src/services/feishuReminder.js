@@ -11,7 +11,16 @@ const SHANGHAI_TIMEZONE = "Asia/Shanghai";
 const defaultFeishuSettings = {
   webhook: "",
   autoEnabled: false,
+  mentionUserId: "",
 };
+
+function escapeFeishuText(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
 
 function pad2(value) {
   return String(value).padStart(2, "0");
@@ -33,6 +42,7 @@ function normalizeFeishuSettings(settings) {
   return {
     webhook: String(settings?.webhook || "").trim(),
     autoEnabled: Boolean(settings?.autoEnabled),
+    mentionUserId: String(settings?.mentionUserId || "").trim(),
   };
 }
 
@@ -44,15 +54,23 @@ function getShanghaiNowParts(now = new Date()) {
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
+    hourCycle: "h23",
     hour12: false,
   });
   const parts = formatter.formatToParts(now);
   const byType = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const rawHour = Number(byType.hour || 0);
   return {
     date: `${byType.year}-${byType.month}-${byType.day}`,
-    hour: Number(byType.hour || 0),
+    hour: rawHour === 24 ? 0 : rawHour,
     minute: Number(byType.minute || 0),
   };
+}
+
+function toMinutes(hour, minute) {
+  const normalizedHour = Math.min(Math.max(Number(hour) || 0, 0), 23);
+  const normalizedMinute = Math.min(Math.max(Number(minute) || 0, 0), 59);
+  return normalizedHour * 60 + normalizedMinute;
 }
 
 function formatShanghaiDateFromTimestamp(timestamp) {
@@ -116,10 +134,25 @@ function buildTodoLines(rows) {
   }).join("\n\n");
 }
 
-async function sendFeishuBotMessage({ webhook, title, text }) {
+function buildFeishuMessageText({ title, text, mentionUserId }) {
+  const parts = [String(title || "").trim(), String(text || "").trim()].filter(Boolean);
+  const nextMentionUserId = String(mentionUserId || "").trim();
+
+  if (nextMentionUserId) {
+    parts.push(`<at user_id="${escapeFeishuText(nextMentionUserId)}">${escapeFeishuText("你")}</at>`);
+  }
+
+  return parts.join("\n");
+}
+
+async function sendFeishuBotMessage({ webhook, title, text, mentionUserId }) {
   await postFeishuTextMessage({
     webhook,
-    text: `${title}\n${text}`,
+    text: buildFeishuMessageText({
+      title,
+      text,
+      mentionUserId,
+    }),
   });
 }
 
@@ -178,7 +211,7 @@ export async function checkFeishuTodoReminders(namespace = DEFAULT_NAMESPACE) {
   const rows = await db.listSyncedTodos(namespace);
   const activeRows = rows.filter((row) => !row.deleted && !row.completed);
 
-  const currentTimeKey = `${shanghaiNow.date} ${pad2(shanghaiNow.hour)}:${pad2(shanghaiNow.minute)}`;
+  const currentMinutes = toMinutes(shanghaiNow.hour, shanghaiNow.minute);
   const dueCandidates = [];
   for (const row of activeRows) {
     const schedule = getTodoSchedule(row);
@@ -186,8 +219,12 @@ export async function checkFeishuTodoReminders(namespace = DEFAULT_NAMESPACE) {
       continue;
     }
 
-    const dueTimeKey = `${schedule.date} ${schedule.time}`;
-    if (dueTimeKey > currentTimeKey) {
+    const [scheduleHour, scheduleMinute] = schedule.time.split(":").map((value) => Number(value));
+    const scheduleMinutes = toMinutes(scheduleHour, scheduleMinute);
+    const isFutureDate = schedule.date > shanghaiNow.date;
+    const isFutureTimeToday = schedule.date === shanghaiNow.date && scheduleMinutes > currentMinutes;
+
+    if (isFutureDate || isFutureTimeToday) {
       continue;
     }
 
@@ -213,6 +250,7 @@ export async function checkFeishuTodoReminders(namespace = DEFAULT_NAMESPACE) {
       webhook: settings.webhook,
       title: dueRows.length === 1 ? "待办到时间了" : "有几条待办到时间了",
       text: buildTodoLines(dueRows),
+      mentionUserId: settings.mentionUserId,
     });
 
     const sentAtMs = Date.now();
@@ -229,10 +267,7 @@ export async function checkFeishuTodoReminders(namespace = DEFAULT_NAMESPACE) {
 
   let summarySent = 0;
   const summaryItems = [];
-  const afterSummaryTime = (
-    shanghaiNow.hour > DAILY_SUMMARY_HOUR ||
-    (shanghaiNow.hour === DAILY_SUMMARY_HOUR && shanghaiNow.minute >= DAILY_SUMMARY_MINUTE)
-  );
+  const afterSummaryTime = currentMinutes >= toMinutes(DAILY_SUMMARY_HOUR, DAILY_SUMMARY_MINUTE);
 
   if (afterSummaryTime && !sentReminderKeys.has(summaryReminderKey)) {
     const todayRows = sortRowsBySchedule(
@@ -243,6 +278,7 @@ export async function checkFeishuTodoReminders(namespace = DEFAULT_NAMESPACE) {
         webhook: settings.webhook,
         title: "今日待办摘要",
         text: buildTodoLines(todayRows),
+        mentionUserId: settings.mentionUserId,
       });
 
       const sentAtMs = Date.now();

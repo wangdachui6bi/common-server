@@ -11,6 +11,19 @@ const pool = mysql.createPool({
   connectionLimit: 10,
 });
 
+async function hasColumn(tableName, columnName) {
+  const [rows] = await pool.execute(
+    `SELECT COLUMN_NAME
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = ?
+       AND TABLE_NAME = ?
+       AND COLUMN_NAME = ?`,
+    [config.mysql.database, tableName, columnName]
+  );
+
+  return Array.isArray(rows) && rows.length > 0;
+}
+
 export async function initDB() {
   await pool.execute(`
     CREATE TABLE IF NOT EXISTS apps (
@@ -73,18 +86,66 @@ export async function initDB() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 
-  const [columns] = await pool.execute(
-    `SELECT COLUMN_NAME
-     FROM INFORMATION_SCHEMA.COLUMNS
-     WHERE TABLE_SCHEMA = ?
-       AND TABLE_NAME = 'synced_todos'
-       AND COLUMN_NAME = 'extra_json'`,
-    [config.mysql.database]
-  );
-
-  if (!Array.isArray(columns) || columns.length === 0) {
+  if (!(await hasColumn("synced_todos", "extra_json"))) {
     await pool.execute(`ALTER TABLE synced_todos ADD COLUMN extra_json MEDIUMTEXT NULL AFTER text`);
   }
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS app_users (
+      user_id                VARCHAR(120) NOT NULL PRIMARY KEY,
+      username               VARCHAR(80)  NOT NULL,
+      display_name           VARCHAR(60)  NOT NULL,
+      password_hash          VARCHAR(255) NOT NULL,
+      is_owner               TINYINT      NOT NULL DEFAULT 0,
+      menu_permissions_json  MEDIUMTEXT   NOT NULL,
+      created_at_ms          BIGINT       NOT NULL,
+      updated_at_ms          BIGINT       NOT NULL,
+      UNIQUE KEY uniq_app_users_username (username)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS app_sessions (
+      session_id      VARCHAR(120) NOT NULL PRIMARY KEY,
+      user_id         VARCHAR(120) NOT NULL,
+      token_hash      VARCHAR(128) NOT NULL,
+      created_at_ms   BIGINT       NOT NULL,
+      expires_at_ms   BIGINT       NOT NULL,
+      UNIQUE KEY uniq_app_sessions_token_hash (token_hash),
+      INDEX idx_app_sessions_user (user_id, expires_at_ms DESC)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS users (
+      id                    INT AUTO_INCREMENT PRIMARY KEY,
+      username              VARCHAR(80)  NOT NULL,
+      password_hash         VARCHAR(255) NOT NULL,
+      nickname              VARCHAR(100) NOT NULL DEFAULT '',
+      role                  VARCHAR(20)  NOT NULL DEFAULT 'user',
+      menu_permissions_json MEDIUMTEXT   NULL,
+      created_at            TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at            TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_users_username (username),
+      INDEX idx_users_role (role)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  if (!(await hasColumn("users", "role"))) {
+    await pool.execute(`ALTER TABLE users ADD COLUMN role VARCHAR(20) NOT NULL DEFAULT 'user' AFTER nickname`);
+  }
+
+  if (!(await hasColumn("users", "menu_permissions_json"))) {
+    await pool.execute(`ALTER TABLE users ADD COLUMN menu_permissions_json MEDIUMTEXT NULL AFTER role`);
+  }
+
+  if (!(await hasColumn("users", "updated_at"))) {
+    await pool.execute(
+      `ALTER TABLE users ADD COLUMN updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER created_at`
+    );
+  }
+
+  await pool.execute(`UPDATE users SET role = 'admin' WHERE username = 'admin' AND role != 'admin'`);
 
   await pool.execute(`
     CREATE TABLE IF NOT EXISTS couple_menu_dishes (
@@ -144,6 +205,109 @@ export async function initDB() {
       INDEX idx_couple_menu_events_created (created_at_ms DESC)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS shared_gallery_albums (
+      album_id         VARCHAR(120) NOT NULL PRIMARY KEY,
+      name             VARCHAR(120) NOT NULL,
+      description      TEXT         NOT NULL,
+      visibility       VARCHAR(20)  NOT NULL DEFAULT 'private',
+      owner_user_id    VARCHAR(120) NULL,
+      cover_asset_id   VARCHAR(120) NULL,
+      created_by       VARCHAR(60)  NOT NULL DEFAULT '',
+      updated_by       VARCHAR(60)  NOT NULL DEFAULT '',
+      created_at_ms    BIGINT       NOT NULL,
+      updated_at_ms    BIGINT       NOT NULL,
+      INDEX idx_shared_gallery_albums_updated (updated_at_ms DESC)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS shared_gallery_assets (
+      asset_id          VARCHAR(120) NOT NULL PRIMARY KEY,
+      album_id          VARCHAR(120) NOT NULL,
+      original_name     VARCHAR(255) NOT NULL,
+      caption           TEXT         NOT NULL,
+      mime_type         VARCHAR(120) NOT NULL,
+      media_type        VARCHAR(20)  NOT NULL DEFAULT 'image',
+      size_bytes        BIGINT       NOT NULL DEFAULT 0,
+      width             INT          NULL,
+      height            INT          NULL,
+      duration_seconds  DECIMAL(10,2) NULL,
+      storage_provider  VARCHAR(20)  NOT NULL DEFAULT 'local',
+      storage_key       VARCHAR(255) NOT NULL,
+      is_favorite       TINYINT      NOT NULL DEFAULT 0,
+      uploaded_by       VARCHAR(60)  NOT NULL DEFAULT '',
+      taken_at_ms       BIGINT       NULL,
+      created_at_ms     BIGINT       NOT NULL,
+      updated_at_ms     BIGINT       NOT NULL,
+      INDEX idx_shared_gallery_assets_album_created (album_id, created_at_ms DESC),
+      INDEX idx_shared_gallery_assets_favorite (is_favorite, created_at_ms DESC)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS shared_gallery_comments (
+      comment_id        VARCHAR(120) NOT NULL PRIMARY KEY,
+      asset_id          VARCHAR(120) NOT NULL,
+      content           TEXT         NOT NULL,
+      author            VARCHAR(60)  NOT NULL DEFAULT '',
+      created_at_ms     BIGINT       NOT NULL,
+      INDEX idx_shared_gallery_comments_asset (asset_id, created_at_ms DESC)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS shared_gallery_album_members (
+      album_id          VARCHAR(120) NOT NULL,
+      user_id           VARCHAR(120) NOT NULL,
+      role              VARCHAR(20)  NOT NULL DEFAULT 'viewer',
+      created_at_ms     BIGINT       NOT NULL,
+      updated_at_ms     BIGINT       NOT NULL,
+      PRIMARY KEY (album_id, user_id),
+      INDEX idx_shared_gallery_album_members_user (user_id, updated_at_ms DESC)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS shared_gallery_share_links (
+      link_id            VARCHAR(120) NOT NULL PRIMARY KEY,
+      album_id           VARCHAR(120) NOT NULL,
+      share_token        VARCHAR(180) NOT NULL,
+      title              VARCHAR(120) NOT NULL,
+      permission         VARCHAR(20)  NOT NULL DEFAULT 'contributor',
+      allow_download     TINYINT      NOT NULL DEFAULT 1,
+      expires_at_ms      BIGINT       NOT NULL,
+      created_by_user_id VARCHAR(120) NOT NULL,
+      created_at_ms      BIGINT       NOT NULL,
+      updated_at_ms      BIGINT       NOT NULL,
+      revoked_at_ms      BIGINT       NULL,
+      UNIQUE KEY uniq_shared_gallery_share_links_token (share_token),
+      INDEX idx_shared_gallery_share_links_album (album_id, updated_at_ms DESC),
+      INDEX idx_shared_gallery_share_links_expire (expires_at_ms, revoked_at_ms)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  if (!(await hasColumn("shared_gallery_albums", "visibility"))) {
+    await pool.execute(
+      `ALTER TABLE shared_gallery_albums
+       ADD COLUMN visibility VARCHAR(20) NOT NULL DEFAULT 'private' AFTER description`
+    );
+  }
+
+  if (!(await hasColumn("shared_gallery_albums", "owner_user_id"))) {
+    await pool.execute(
+      `ALTER TABLE shared_gallery_albums
+       ADD COLUMN owner_user_id VARCHAR(120) NULL AFTER visibility`
+    );
+  }
+
+  if (!(await hasColumn("shared_gallery_share_links", "allow_download"))) {
+    await pool.execute(
+      `ALTER TABLE shared_gallery_share_links
+       ADD COLUMN allow_download TINYINT NOT NULL DEFAULT 1 AFTER permission`
+    );
+  }
 }
 
 export const db = {
