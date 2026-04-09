@@ -48,17 +48,22 @@ export async function requireAuth(req, res, next) {
     return res.status(401).json({ error: "Unauthorized: access token is required" });
   }
 
-  const session = await getUserByAccessToken(token);
-  if (!session) {
-    return res.status(401).json({ error: "Unauthorized: invalid or expired session" });
-  }
+  try {
+    const session = await getUserByAccessToken(token);
+    if (!session) {
+      return res.status(401).json({ error: "Unauthorized: invalid or expired session" });
+    }
 
-  req.authToken = token;
-  req.authUser = session.user;
-  req.authSession = session;
-  res.locals.authUser = session.user;
-  res.locals.authToken = token;
-  next();
+    req.authToken = token;
+    req.authUser = session.user;
+    req.authSession = session;
+    res.locals.authUser = session.user;
+    res.locals.authToken = token;
+    next();
+  } catch (error) {
+    console.error("[auth] requireAuth failed", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
 }
 
 export function requireAdmin(req, res, next) {

@@ -15,6 +15,13 @@ import sharedGalleryRouter from "./routes/sharedGallery.js";
 import { startFeishuReminderScheduler } from "./services/feishuReminder.js";
 import { ensureMediaDirs } from "./services/mediaStorage.js";
 
+process.on("unhandledRejection", (reason) => {
+  console.error("[process] unhandledRejection:", reason);
+});
+process.on("uncaughtException", (error) => {
+  console.error("[process] uncaughtException:", error);
+});
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 

@@ -8,7 +8,11 @@ const pool = mysql.createPool({
   password: config.mysql.password,
   database: config.mysql.database,
   waitForConnections: true,
-  connectionLimit: 10,
+  connectionLimit: 20,
+  queueLimit: 100,
+  connectTimeout: 10000,
+  enableKeepAlive: true,
+  keepAliveInitialDelay: 30000,
 });
 
 async function hasColumn(tableName, columnName) {

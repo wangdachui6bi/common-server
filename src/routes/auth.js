@@ -54,25 +54,35 @@ router.post("/login", async (req, res) => {
 });
 
 router.post("/logout", requireAuth, async (req, res) => {
-  await invalidateSessionToken(req.authToken);
-  res.json({ ok: true });
+  try {
+    await invalidateSessionToken(req.authToken);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error("[auth] logout failed", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 router.get("/me", requireAuth, async (req, res) => {
-  const users = await listUsers();
-  const currentUser = users.find((item) => String(item.id) === String(req.authUser.id)) || req.authUser;
-  const payload = toCompatPayload(
-    currentUser,
-    {
-      token: req.authToken,
-      expiresAt: req.authSession?.expiresAt || "",
-    },
-    req.authToken
-  );
-  res.json({
-    ...currentUser,
-    ...payload,
-  });
+  try {
+    const users = await listUsers();
+    const currentUser = users.find((item) => String(item.id) === String(req.authUser.id)) || req.authUser;
+    const payload = toCompatPayload(
+      currentUser,
+      {
+        token: req.authToken,
+        expiresAt: req.authSession?.expiresAt || "",
+      },
+      req.authToken
+    );
+    res.json({
+      ...currentUser,
+      ...payload,
+    });
+  } catch (error) {
+    console.error("[auth] /me failed", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 router.post("/change-password", requireAuth, async (req, res) => {
@@ -89,9 +99,14 @@ router.post("/change-password", requireAuth, async (req, res) => {
 });
 
 router.get("/users", requireAuth, async (_req, res) => {
-  res.json({
-    items: await listUsers(),
-  });
+  try {
+    res.json({
+      items: await listUsers(),
+    });
+  } catch (error) {
+    console.error("[auth] /users failed", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 router.patch("/users/:id/menu-permissions", requireAuth, async (req, res) => {

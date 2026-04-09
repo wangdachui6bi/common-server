@@ -25,6 +25,17 @@ const upload = multer({
   },
 });
 
+function asyncHandler(fn) {
+  return (req, res, next) => {
+    Promise.resolve(fn(req, res, next)).catch((error) => {
+      console.error(`[gallery] ${req.method} ${req.originalUrl} failed:`, error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Internal server error" });
+      }
+    });
+  };
+}
+
 const SHARE_LINK_DEFAULT_HOURS = 24;
 const SHARE_LINK_MAX_HOURS = 24 * 30;
 
@@ -653,7 +664,7 @@ async function handleUpload({ album, actor, ownerUserId, files, metaItems }) {
   await refreshAlbumCover(album.album_id);
 }
 
-router.get("/share/:token/bootstrap", async (req, res) => {
+router.get("/share/:token/bootstrap", asyncHandler(async (req, res) => {
   const shareToken = String(req.params.token || "").trim();
   const state = await fetchShareState(req, shareToken);
   if (!state.payload) {
@@ -661,9 +672,9 @@ router.get("/share/:token/bootstrap", async (req, res) => {
   }
 
   res.json(state.payload);
-});
+}));
 
-router.post("/share/:token/assets/upload", upload.array("files", 24), async (req, res) => {
+router.post("/share/:token/assets/upload", upload.array("files", 24), asyncHandler(async (req, res) => {
   const shareToken = String(req.params.token || "").trim();
   const access = await getShareLinkAccess(shareToken);
   if (!access || !access.canView) {
@@ -691,9 +702,9 @@ router.post("/share/:token/assets/upload", upload.array("files", 24), async (req
     return res.status(shareErrorStatus(state.access)).json({ error: shareErrorMessage(state.access) });
   }
   res.json(state.payload);
-});
+}));
 
-router.get("/share/:token/assets/:id/file", async (req, res) => {
+router.get("/share/:token/assets/:id/file", asyncHandler(async (req, res) => {
   const shareToken = String(req.params.token || "").trim();
   const access = await getShareLinkAccess(shareToken);
   if (!access || !access.canView) {
@@ -716,9 +727,9 @@ router.get("/share/:token/assets/:id/file", async (req, res) => {
     asset,
     download: isDownload,
   });
-});
+}));
 
-router.get("/share/:token/archive", async (req, res) => {
+router.get("/share/:token/archive", asyncHandler(async (req, res) => {
   const shareToken = String(req.params.token || "").trim();
   const access = await getShareLinkAccess(shareToken);
   if (!access || !access.canView) {
@@ -737,15 +748,15 @@ router.get("/share/:token/archive", async (req, res) => {
   }
 
   await sendArchive(res, access.album, assets);
-});
+}));
 
 router.use(requireAuth);
 
-router.get("/bootstrap", async (req, res) => {
+router.get("/bootstrap", asyncHandler(async (req, res) => {
   await sendState(req, res);
-});
+}));
 
-router.post("/albums", async (req, res) => {
+router.post("/albums", asyncHandler(async (req, res) => {
   const name = String(req.body.name || "").trim();
   if (!name) {
     return res.status(400).json({ error: "name is required" });
@@ -771,9 +782,9 @@ router.post("/albums", async (req, res) => {
   );
 
   await sendState(req, res);
-});
+}));
 
-router.patch("/albums/:id", async (req, res) => {
+router.patch("/albums/:id", asyncHandler(async (req, res) => {
   const access = await getAlbumAccess(String(req.params.id || "").trim(), req.authUser.id);
   if (!access || !access.canManage) {
     return res.status(403).json({ error: "Forbidden: cannot manage this album" });
@@ -794,9 +805,9 @@ router.patch("/albums/:id", async (req, res) => {
   );
 
   await sendState(req, res);
-});
+}));
 
-router.put("/albums/:id/members", async (req, res) => {
+router.put("/albums/:id/members", asyncHandler(async (req, res) => {
   const access = await getAlbumAccess(String(req.params.id || "").trim(), req.authUser.id);
   if (!access || !access.canManage) {
     return res.status(403).json({ error: "Forbidden: cannot manage members" });
@@ -826,9 +837,9 @@ router.put("/albums/:id/members", async (req, res) => {
   );
 
   await sendState(req, res);
-});
+}));
 
-router.post("/albums/:id/share-links", async (req, res) => {
+router.post("/albums/:id/share-links", asyncHandler(async (req, res) => {
   const access = await getAlbumAccess(String(req.params.id || "").trim(), req.authUser.id);
   if (!access || !access.canManage) {
     return res.status(403).json({ error: "Forbidden: cannot create share links for this album" });
@@ -860,9 +871,9 @@ router.post("/albums/:id/share-links", async (req, res) => {
   );
 
   await sendState(req, res);
-});
+}));
 
-router.delete("/share-links/:id", async (req, res) => {
+router.delete("/share-links/:id", asyncHandler(async (req, res) => {
   const linkId = String(req.params.id || "").trim();
   const link = await fetchOne(`SELECT * FROM shared_gallery_share_links WHERE link_id = ? LIMIT 1`, [linkId]);
   if (!link) {
@@ -881,9 +892,9 @@ router.delete("/share-links/:id", async (req, res) => {
   ]);
 
   await sendState(req, res);
-});
+}));
 
-router.delete("/share-links/:id/permanent", async (req, res) => {
+router.delete("/share-links/:id/permanent", asyncHandler(async (req, res) => {
   const linkId = String(req.params.id || "").trim();
   const link = await fetchOne(`SELECT * FROM shared_gallery_share_links WHERE link_id = ? LIMIT 1`, [linkId]);
   if (!link) {
@@ -903,9 +914,9 @@ router.delete("/share-links/:id/permanent", async (req, res) => {
   await pool.execute(`DELETE FROM shared_gallery_share_links WHERE link_id = ?`, [linkId]);
 
   await sendState(req, res);
-});
+}));
 
-router.post("/assets/upload", upload.array("files", 24), async (req, res) => {
+router.post("/assets/upload", upload.array("files", 24), asyncHandler(async (req, res) => {
   const albumId = String(req.body.albumId || "").trim() || (await ensureDefaultAlbum(req.authUser));
   const access = await getAlbumAccess(albumId, req.authUser.id);
   if (!access || !access.canEdit) {
@@ -926,9 +937,9 @@ router.post("/assets/upload", upload.array("files", 24), async (req, res) => {
   });
 
   await sendState(req, res);
-});
+}));
 
-router.patch("/assets/:id/favorite", async (req, res) => {
+router.patch("/assets/:id/favorite", asyncHandler(async (req, res) => {
   const asset = await fetchAssetById(String(req.params.id || "").trim());
   if (!asset) {
     return res.status(404).json({ error: "Asset not found" });
@@ -945,9 +956,9 @@ router.patch("/assets/:id/favorite", async (req, res) => {
   );
 
   await sendState(req, res);
-});
+}));
 
-router.delete("/assets/:id", async (req, res) => {
+router.delete("/assets/:id", asyncHandler(async (req, res) => {
   const asset = await fetchAssetById(String(req.params.id || "").trim());
   if (!asset) {
     return res.status(404).json({ error: "Asset not found" });
@@ -963,9 +974,9 @@ router.delete("/assets/:id", async (req, res) => {
   await pool.execute(`DELETE FROM shared_gallery_assets WHERE asset_id = ?`, [asset.asset_id]);
   await refreshAlbumCover(asset.album_id);
   await sendState(req, res);
-});
+}));
 
-router.post("/comments", async (req, res) => {
+router.post("/comments", asyncHandler(async (req, res) => {
   const assetId = String(req.body.assetId || "").trim();
   const content = String(req.body.content || "").trim();
   if (!assetId || !content) {
@@ -989,9 +1000,9 @@ router.post("/comments", async (req, res) => {
   );
 
   await sendState(req, res);
-});
+}));
 
-router.get("/assets/:id/file", async (req, res) => {
+router.get("/assets/:id/file", asyncHandler(async (req, res) => {
   const asset = await fetchAssetById(String(req.params.id || "").trim());
   if (!asset) {
     return res.status(404).json({ error: "Asset not found" });
@@ -1008,9 +1019,9 @@ router.get("/assets/:id/file", async (req, res) => {
     asset,
     download: ["1", "true"].includes(String(req.query.download || "")),
   });
-});
+}));
 
-router.get("/albums/:id/archive", async (req, res) => {
+router.get("/albums/:id/archive", asyncHandler(async (req, res) => {
   const access = await getAlbumAccess(String(req.params.id || "").trim(), req.authUser.id);
   if (!access || !access.canView) {
     return res.status(403).json({ error: "Forbidden: cannot archive this album" });
@@ -1025,6 +1036,6 @@ router.get("/albums/:id/archive", async (req, res) => {
   }
 
   await sendArchive(res, access.album, assets);
-});
+}));
 
 export default router;
