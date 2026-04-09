@@ -863,9 +863,8 @@ router.post("/albums/:id/share-links", async (req, res) => {
 });
 
 router.delete("/share-links/:id", async (req, res) => {
-  const link = await fetchOne(`SELECT * FROM shared_gallery_share_links WHERE link_id = ? LIMIT 1`, [
-    String(req.params.id || "").trim(),
-  ]);
+  const linkId = String(req.params.id || "").trim();
+  const link = await fetchOne(`SELECT * FROM shared_gallery_share_links WHERE link_id = ? LIMIT 1`, [linkId]);
   if (!link) {
     return res.status(404).json({ error: "Share link not found" });
   }
@@ -878,8 +877,30 @@ router.delete("/share-links/:id", async (req, res) => {
   await pool.execute(`UPDATE shared_gallery_share_links SET revoked_at_ms = ?, updated_at_ms = ? WHERE link_id = ?`, [
     now(),
     now(),
-    link.link_id,
+    linkId,
   ]);
+
+  await sendState(req, res);
+});
+
+router.delete("/share-links/:id/permanent", async (req, res) => {
+  const linkId = String(req.params.id || "").trim();
+  const link = await fetchOne(`SELECT * FROM shared_gallery_share_links WHERE link_id = ? LIMIT 1`, [linkId]);
+  if (!link) {
+    return res.status(404).json({ error: "Share link not found" });
+  }
+
+  const access = await getAlbumAccess(link.album_id, req.authUser.id);
+  if (!access || !access.canManage) {
+    return res.status(403).json({ error: "Forbidden: cannot delete this share link" });
+  }
+
+  const isExpired = Boolean(link.revoked_at_ms) || Number(link.expires_at_ms) <= now();
+  if (!isExpired) {
+    return res.status(400).json({ error: "Only revoked or expired share links can be permanently deleted" });
+  }
+
+  await pool.execute(`DELETE FROM shared_gallery_share_links WHERE link_id = ?`, [linkId]);
 
   await sendState(req, res);
 });

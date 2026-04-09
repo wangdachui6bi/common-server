@@ -3,19 +3,22 @@ services:
     build: .
     container_name: update-server
     restart: unless-stopped
-    ports:
-      - "${PORT:-3600}:3600"
+    env_file:
+      - .env
     environment:
-      - PORT=3600
-      - ADMIN_API_KEY=${ADMIN_API_KEY:-change-me-to-a-strong-random-string}
       - UPLOAD_DIR=/app/uploads
-      - BASE_URL=${BASE_URL:-http://localhost:3600}
-      - MYSQL_HOST=${MYSQL_HOST:-mysql}
-      - MYSQL_PORT=${MYSQL_PORT:-3306}
-      - MYSQL_USER=${MYSQL_USER:-root}
-      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
-      - MYSQL_DATABASE=${MYSQL_DATABASE:-appdb}
-      - SYNC_API_TOKEN=${SYNC_API_TOKEN}
+      - MYSQL_HOST=mysql
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.common-server.rule=Host(`api.wkaiys.top`)"
+      - "traefik.http.routers.common-server.entrypoints=websecure"
+      - "traefik.http.routers.common-server.tls.certresolver=myresolver"
+      - "traefik.http.services.common-server.loadbalancer.server.port=3600"
+      - "traefik.http.routers.common-server-http.rule=Host(`api.wkaiys.top`)"
+      - "traefik.http.routers.common-server-http.entrypoints=web"
+      - "traefik.http.routers.common-server-http.middlewares=common-server-redirect"
+      - "traefik.http.middlewares.common-server-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.common-server-redirect.redirectscheme.permanent=true"
     volumes:
       - /data/common-server/uploads:/app/uploads
     networks:
