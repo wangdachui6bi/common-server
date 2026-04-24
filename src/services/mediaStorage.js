@@ -1,12 +1,15 @@
 import COS from "cos-nodejs-sdk-v5";
 import { createReadStream } from "fs";
-import { copyFile, mkdir, unlink } from "fs/promises";
+import sharp from "sharp";
+import { copyFile, mkdir, readFile, stat, unlink } from "fs/promises";
 import { basename, dirname, resolve } from "path";
 import { Readable } from "stream";
 import { config } from "../config.js";
 
 const localRoot = resolve(config.uploadDir, "shared-gallery");
 const tempRoot = resolve(config.uploadDir, ".shared-gallery-tmp");
+const previewRoot = resolve(config.uploadDir, ".shared-gallery-preview-cache");
+const previewMimeType = "image/webp";
 
 const cosEnabled = Boolean(
   config.cos.secretId &&
@@ -37,6 +40,19 @@ function makePublicCosUrl(key) {
 
 function getLocalAbsolutePath(storageKey) {
   return resolve(localRoot, storageKey);
+}
+
+function getPreviewAbsolutePath(storageKey) {
+  return resolve(previewRoot, `${storageKey}.webp`);
+}
+
+async function pathExists(path) {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function putObject(params) {
@@ -75,9 +91,27 @@ function getSignedUrl(params) {
   });
 }
 
+async function fetchRemoteObjectResponse(asset) {
+  const signedUrl = await getSignedUrl({
+    Bucket: config.cos.bucket,
+    Region: config.cos.region,
+    Key: asset.storage_key,
+    Sign: true,
+    Expires: config.cos.signedUrlExpires,
+  });
+
+  const response = await fetch(signedUrl || makePublicCosUrl(asset.storage_key));
+  if (!response.ok || !response.body) {
+    throw new Error(`Failed to read remote object: ${asset.storage_key}`);
+  }
+
+  return response;
+}
+
 export async function ensureMediaDirs() {
   await mkdir(localRoot, { recursive: true });
   await mkdir(tempRoot, { recursive: true });
+  await mkdir(previewRoot, { recursive: true });
 }
 
 export function getUploadTempDir() {
@@ -140,26 +174,16 @@ export async function removeStoredObject(asset) {
       Region: config.cos.region,
       Key: asset.storage_key,
     }).catch(() => {});
-    return;
+  } else {
+    await unlink(getLocalAbsolutePath(asset.storage_key)).catch(() => {});
   }
 
-  await unlink(getLocalAbsolutePath(asset.storage_key)).catch(() => {});
+  await unlink(getPreviewAbsolutePath(asset.storage_key)).catch(() => {});
 }
 
 export async function createStoredObjectReadStream(asset) {
   if (asset.storage_provider === "cos" && cosEnabled) {
-    const signedUrl = await getSignedUrl({
-      Bucket: config.cos.bucket,
-      Region: config.cos.region,
-      Key: asset.storage_key,
-      Sign: true,
-      Expires: config.cos.signedUrlExpires,
-    });
-
-    const response = await fetch(signedUrl || makePublicCosUrl(asset.storage_key));
-    if (!response.ok || !response.body) {
-      throw new Error(`Failed to read remote object: ${asset.storage_key}`);
-    }
+    const response = await fetchRemoteObjectResponse(asset);
 
     return {
       stream: Readable.fromWeb(response.body),
@@ -173,9 +197,78 @@ export async function createStoredObjectReadStream(asset) {
   };
 }
 
+async function readStoredObjectBuffer(asset) {
+  if (asset.storage_provider === "cos" && cosEnabled) {
+    const response = await fetchRemoteObjectResponse(asset);
+    return Buffer.from(await response.arrayBuffer());
+  }
+
+  return readFile(getLocalAbsolutePath(asset.storage_key));
+}
+
+export async function ensureStoredObjectPreview(asset) {
+  if (!String(asset.mime_type || "").startsWith("image/")) {
+    return null;
+  }
+
+  const previewPath = getPreviewAbsolutePath(asset.storage_key);
+  if (await pathExists(previewPath)) {
+    return {
+      path: previewPath,
+      contentType: previewMimeType,
+    };
+  }
+
+  await mkdir(dirname(previewPath), { recursive: true });
+
+  const source =
+    asset.storage_provider === "local" || !cosEnabled
+      ? getLocalAbsolutePath(asset.storage_key)
+      : await readStoredObjectBuffer(asset);
+
+  await sharp(source, { animated: true, failOn: "none" })
+    .rotate()
+    .resize({
+      width: config.gallery.previewWidth,
+      height: config.gallery.previewWidth,
+      fit: "inside",
+      withoutEnlargement: true,
+    })
+    .webp({
+      quality: config.gallery.previewQuality,
+    })
+    .toFile(previewPath);
+
+  return {
+    path: previewPath,
+    contentType: previewMimeType,
+  };
+}
+
+export async function sendStoredObjectPreview({ res, asset }) {
+  const preview = await ensureStoredObjectPreview(asset);
+  if (!preview) {
+    return false;
+  }
+
+  res.sendFile(preview.path, {
+    headers: {
+      "Content-Type": preview.contentType,
+      "Cache-Control": "public, max-age=604800, stale-while-revalidate=86400",
+    },
+    acceptRanges: true,
+    lastModified: true,
+  });
+
+  return true;
+}
+
 export async function sendStoredObject({ req, res, asset, download }) {
   const filename = asset.original_name || "download";
   const disposition = buildContentDisposition(filename, download ? "attachment" : "inline");
+  const cacheControl = download
+    ? "private, max-age=0, must-revalidate"
+    : "public, max-age=604800, stale-while-revalidate=86400";
 
   if (asset.storage_provider === "cos" && cosEnabled) {
     const signedUrl = await getSignedUrl({
@@ -197,6 +290,7 @@ export async function sendStoredObject({ req, res, asset, download }) {
     headers: {
       "Content-Type": asset.mime_type || "application/octet-stream",
       "Content-Disposition": disposition,
+      "Cache-Control": cacheControl,
     },
     acceptRanges: true,
     lastModified: true,

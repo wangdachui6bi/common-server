@@ -23,6 +23,11 @@ export const config = {
     pathPrefix: process.env.COS_PATH_PREFIX || "shared-gallery",
     signedUrlExpires: parseInt(process.env.COS_SIGNED_URL_EXPIRES || "900", 10),
   },
+  gallery: {
+    previewWidth: parseInt(process.env.GALLERY_PREVIEW_WIDTH || "960", 10),
+    previewQuality: parseInt(process.env.GALLERY_PREVIEW_QUALITY || "78", 10),
+    requestTimeoutMs: parseInt(process.env.GALLERY_REQUEST_TIMEOUT_MS || String(30 * 60 * 1000), 10),
+  },
   mysql: {
     host: process.env.MYSQL_HOST || "127.0.0.1",
     port: parseInt(process.env.MYSQL_PORT || "3306", 10),

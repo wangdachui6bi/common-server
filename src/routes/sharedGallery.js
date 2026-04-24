@@ -9,10 +9,12 @@ import { requireAuth } from "../middleware/auth.js";
 import { listUsers } from "../services/authSession.js";
 import {
   createStoredObjectReadStream,
+  ensureStoredObjectPreview,
   getStorageInfo,
   getUploadTempDir,
   removeStoredObject,
   sendStoredObject,
+  sendStoredObjectPreview,
   storeUploadedFile,
 } from "../services/mediaStorage.js";
 
@@ -23,6 +25,12 @@ const upload = multer({
     fileSize: 1024 * 1024 * 1024,
     files: 24,
   },
+});
+
+router.use((req, res, next) => {
+  req.setTimeout(config.gallery.requestTimeoutMs);
+  res.setTimeout(config.gallery.requestTimeoutMs);
+  next();
 });
 
 function asyncHandler(fn) {
@@ -101,11 +109,16 @@ function buildContentDisposition(filename, disposition) {
   return `${disposition}; filename="${safeName.replace(/"/g, "")}"; filename*=UTF-8''${encodeURIComponent(safeName)}`;
 }
 
+function appendQuery(url, query) {
+  return `${url}${url.includes("?") ? "&" : "?"}${query}`;
+}
+
 function buildAssetUrls(req, assetId, shareToken = "") {
   if (shareToken) {
     const base = `${config.baseUrl.replace(/\/$/, "")}/api/gallery/share/${encodeURIComponent(shareToken)}/assets/${assetId}/file`;
     return {
       previewUrl: base,
+      thumbnailUrl: appendQuery(base, "variant=preview"),
       downloadUrl: `${base}?download=1`,
     };
   }
@@ -116,6 +129,7 @@ function buildAssetUrls(req, assetId, shareToken = "") {
 
   return {
     previewUrl: `${base}${tokenQuery ? `?${tokenQuery}` : ""}`,
+    thumbnailUrl: appendQuery(base, `${tokenQuery ? `${tokenQuery}&` : ""}variant=preview`),
     downloadUrl: `${base}?download=1${tokenQuery ? `&${tokenQuery}` : ""}`,
   };
 }
@@ -304,6 +318,7 @@ function serializeAsset(row, albumMap, req, shareToken = "") {
     createdAt: new Date(Number(row.created_at_ms)).toISOString(),
     updatedAt: new Date(Number(row.updated_at_ms)).toISOString(),
     previewUrl: urls.previewUrl,
+    thumbnailUrl: row.media_type === "image" ? urls.thumbnailUrl : urls.previewUrl,
     downloadUrl: urls.downloadUrl,
   };
 }
@@ -626,6 +641,15 @@ async function handleUpload({ album, actor, ownerUserId, files, metaItems }) {
       storageKey,
       mimeType: file.mimetype,
     });
+    if (pickMediaType(file.mimetype) === "image") {
+      void ensureStoredObjectPreview({
+        storage_provider: stored.storageProvider,
+        storage_key: stored.storageKey,
+        mime_type: file.mimetype || "application/octet-stream",
+      }).catch((error) => {
+        console.warn(`[gallery] preview warmup failed for ${stored.storageKey}:`, error);
+      });
+    }
     const timestamp = now();
 
     await pool.execute(
@@ -719,6 +743,13 @@ router.get("/share/:token/assets/:id/file", asyncHandler(async (req, res) => {
   const isDownload = ["1", "true"].includes(String(req.query.download || ""));
   if (isDownload && !access.canDownload) {
     return res.status(403).json({ error: "Forbidden: download is disabled for this share link" });
+  }
+
+  if (!isDownload && String(req.query.variant || "").trim() === "preview") {
+    const sent = await sendStoredObjectPreview({ res, asset }).catch(() => false);
+    if (sent) {
+      return;
+    }
   }
 
   await sendStoredObject({
@@ -1013,11 +1044,19 @@ router.get("/assets/:id/file", asyncHandler(async (req, res) => {
     return res.status(403).json({ error: "Forbidden: cannot access this asset" });
   }
 
+  const isDownload = ["1", "true"].includes(String(req.query.download || ""));
+  if (!isDownload && String(req.query.variant || "").trim() === "preview") {
+    const sent = await sendStoredObjectPreview({ res, asset }).catch(() => false);
+    if (sent) {
+      return;
+    }
+  }
+
   await sendStoredObject({
     req,
     res,
     asset,
-    download: ["1", "true"].includes(String(req.query.download || "")),
+    download: isDownload,
   });
 }));
 

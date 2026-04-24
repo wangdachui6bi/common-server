@@ -67,10 +67,13 @@ initDB()
   })
   .then(() => {
     startFeishuReminderScheduler();
-    app.listen(config.port, "0.0.0.0", () => {
+    const server = app.listen(config.port, "0.0.0.0", () => {
       console.log(`Update server running on http://0.0.0.0:${config.port}`);
       console.log(`Admin API key: ${config.adminApiKey.slice(0, 4)}****`);
     });
+    server.requestTimeout = config.gallery.requestTimeoutMs;
+    server.headersTimeout = Math.max(server.headersTimeout, 65000);
+    server.keepAliveTimeout = 65000;
   })
   .catch((err) => {
     console.error("Failed to initialize database:", err);
