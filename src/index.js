@@ -73,8 +73,10 @@ initDB()
       console.log(`Update server running on http://0.0.0.0:${config.port}`);
       console.log(`Admin API key: ${config.adminApiKey.slice(0, 4)}****`);
     });
-    server.requestTimeout = config.gallery.requestTimeoutMs;
-    server.headersTimeout = Math.max(server.headersTimeout, 65000);
+    // Keep global request timeout conservative so stalled requests don't pin the only Node worker.
+    // Gallery upload/download routes still opt into a longer timeout explicitly per request.
+    server.requestTimeout = config.server.requestTimeoutMs;
+    server.headersTimeout = Math.max(server.requestTimeout + 5000, 65000);
     server.keepAliveTimeout = 65000;
   })
   .catch((err) => {

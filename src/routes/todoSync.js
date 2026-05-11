@@ -10,6 +10,12 @@ import {
 const router = Router();
 const DEFAULT_NAMESPACE = "default";
 
+function asyncHandler(handler) {
+  return (req, res, next) => {
+    Promise.resolve(handler(req, res, next)).catch(next);
+  };
+}
+
 function toTimestamp(value, fallback = Date.now()) {
   if (typeof value === "number" && Number.isFinite(value)) {
     return value;
@@ -59,6 +65,27 @@ async function sendTodoList(res, options = {}) {
 async function importTodos(req, res) {
   const sourceApp = String(req.body.sourceApp || "").trim().slice(0, 100);
   const items = Array.isArray(req.body.items) ? req.body.items : [];
+  const todoIds = [];
+  const seenTodoIds = new Set();
+
+  for (const item of items) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+
+    const todoId = String(item.id || "").trim();
+    if (todoId && !seenTodoIds.has(todoId)) {
+      seenTodoIds.add(todoId);
+      todoIds.push(todoId);
+    }
+  }
+
+  const existingRows = await db.getSyncedTodosByIds({
+    namespace: DEFAULT_NAMESPACE,
+    todoIds,
+  });
+  const currentById = new Map(existingRows.map((row) => [row.todo_id, row]));
+  const pendingUpserts = new Map();
 
   for (const item of items) {
     if (!item || typeof item !== "object") {
@@ -71,7 +98,7 @@ async function importTodos(req, res) {
       continue;
     }
 
-    const existing = await db.getSyncedTodo({ namespace: DEFAULT_NAMESPACE, todoId });
+    const existing = currentById.get(todoId) || null;
     const createdAtMs = toTimestamp(item.createdAt);
     const updatedAtMs = toTimestamp(item.updatedAt, createdAtMs);
     const deletedAtMs = item.deletedAt ? toTimestamp(item.deletedAt, updatedAtMs) : null;
@@ -80,7 +107,7 @@ async function importTodos(req, res) {
       continue;
     }
 
-    await db.upsertSyncedTodo({
+    const nextRow = {
       namespace: DEFAULT_NAMESPACE,
       todoId,
       text,
@@ -93,17 +120,34 @@ async function importTodos(req, res) {
       updatedAtMs,
       deletedAtMs,
       sourceApp,
+    };
+
+    pendingUpserts.set(todoId, nextRow);
+    currentById.set(todoId, {
+      todo_id: todoId,
+      text: nextRow.text,
+      extra_json: nextRow.extraJson,
+      completed: nextRow.completed,
+      deleted: nextRow.deleted,
+      created_at_ms: nextRow.createdAtMs,
+      updated_at_ms: nextRow.updatedAtMs,
+      deleted_at_ms: nextRow.deletedAtMs,
+      source_app: nextRow.sourceApp,
     });
+  }
+
+  if (pendingUpserts.size > 0) {
+    await db.bulkUpsertSyncedTodos([...pendingUpserts.values()]);
   }
 
   return sendTodoList(res);
 }
 
-router.get("/todos", requireSyncToken, async (_req, res) => {
+router.get("/todos", requireSyncToken, asyncHandler(async (_req, res) => {
   await sendTodoList(res);
-});
+}));
 
-router.post("/todos", requireSyncToken, async (req, res) => {
+router.post("/todos", requireSyncToken, asyncHandler(async (req, res) => {
   const todoId = String(req.body.id || "").trim();
   const text = String(req.body.text || "").trim();
 
@@ -137,9 +181,9 @@ router.post("/todos", requireSyncToken, async (req, res) => {
   });
 
   return sendTodoList(res);
-});
+}));
 
-router.patch("/todos/:id", requireSyncToken, async (req, res) => {
+router.patch("/todos/:id", requireSyncToken, asyncHandler(async (req, res) => {
   const todoId = String(req.params.id || "").trim();
   const existing = await db.getSyncedTodo({ namespace: DEFAULT_NAMESPACE, todoId });
 
@@ -168,9 +212,9 @@ router.patch("/todos/:id", requireSyncToken, async (req, res) => {
   });
 
   return sendTodoList(res);
-});
+}));
 
-router.delete("/todos/:id", requireSyncToken, async (req, res) => {
+router.delete("/todos/:id", requireSyncToken, asyncHandler(async (req, res) => {
   const todoId = String(req.params.id || "").trim();
   const existing = await db.getSyncedTodo({ namespace: DEFAULT_NAMESPACE, todoId });
 
@@ -193,60 +237,45 @@ router.delete("/todos/:id", requireSyncToken, async (req, res) => {
   });
 
   return sendTodoList(res);
-});
+}));
 
-router.post("/todos/clear-completed", requireSyncToken, async (req, res) => {
-  const rows = await db.listSyncedTodos(DEFAULT_NAMESPACE);
+router.post("/todos/clear-completed", requireSyncToken, asyncHandler(async (req, res) => {
   const now = Date.now();
   const sourceApp = String(req.body?.sourceApp || "").trim().slice(0, 100);
-
-  for (const row of rows) {
-    if (!row.completed) {
-      continue;
-    }
-
-    await db.upsertSyncedTodo({
-      namespace: DEFAULT_NAMESPACE,
-      todoId: row.todo_id,
-      text: row.text,
-      extraJson: row.extra_json,
-      completed: 0,
-      deleted: 1,
-      createdAtMs: Number(row.created_at_ms),
-      updatedAtMs: now,
-      deletedAtMs: now,
-      sourceApp: sourceApp || row.source_app || "",
-    });
-  }
+  await db.softDeleteCompletedSyncedTodos({
+    namespace: DEFAULT_NAMESPACE,
+    updatedAtMs: now,
+    sourceApp,
+  });
 
   return sendTodoList(res);
-});
+}));
 
-router.post("/todos/import", requireSyncToken, importTodos);
-router.post("/todos/sync", requireSyncToken, importTodos);
+router.post("/todos/import", requireSyncToken, asyncHandler(importTodos));
+router.post("/todos/sync", requireSyncToken, asyncHandler(importTodos));
 
-router.get("/feishu/settings", requireSyncToken, async (_req, res) => {
+router.get("/feishu/settings", requireSyncToken, asyncHandler(async (_req, res) => {
   const settings = await getFeishuTodoSettings(DEFAULT_NAMESPACE);
   res.json({
     settings,
     serverTime: new Date().toISOString(),
   });
-});
+}));
 
-router.put("/feishu/settings", requireSyncToken, async (req, res) => {
+router.put("/feishu/settings", requireSyncToken, asyncHandler(async (req, res) => {
   const settings = await saveFeishuTodoSettings(req.body || {}, DEFAULT_NAMESPACE);
   res.json({
     settings,
     serverTime: new Date().toISOString(),
   });
-});
+}));
 
-router.post("/feishu/check", requireSyncToken, async (_req, res) => {
+router.post("/feishu/check", requireSyncToken, asyncHandler(async (_req, res) => {
   const result = await checkFeishuTodoReminders(DEFAULT_NAMESPACE);
   res.json({
     ...result,
     serverTime: new Date().toISOString(),
   });
-});
+}));
 
 export default router;

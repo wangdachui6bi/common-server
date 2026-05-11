@@ -6,6 +6,7 @@ import { notifyMenuUpdate } from "../services/menuNotifier.js";
 
 const router = Router();
 const liveClients = new Set();
+const SSE_HEARTBEAT_MS = 20000;
 
 const RECOMMENDATIONS = [
   { name: "番茄牛腩", category: "家常炖菜", reason: "酸甜稳妥，适合两个人一起吃。", tags: ["下饭", "周末"] },
@@ -165,12 +166,18 @@ function notifyAsync(title, lines) {
   });
 }
 
+function asyncHandler(handler) {
+  return (req, res, next) => {
+    Promise.resolve(handler(req, res, next)).catch(next);
+  };
+}
+
 router.use(requireAuth);
 router.use(requireMenuPermission("menuView"));
 
-router.get("/bootstrap", async (_req, res) => {
+router.get("/bootstrap", asyncHandler(async (_req, res) => {
   await sendState(res);
-});
+}));
 
 router.get("/recommendations", (_req, res) => {
   res.json({ items: RECOMMENDATIONS });
@@ -184,13 +191,22 @@ router.get("/events/stream", (req, res) => {
 
   res.write(`event: connected\ndata: ${JSON.stringify({ ok: true, timestamp: new Date().toISOString() })}\n\n`);
   liveClients.add(res);
+  const heartbeatId = setInterval(() => {
+    try {
+      res.write(`event: heartbeat\ndata: ${JSON.stringify({ timestamp: new Date().toISOString() })}\n\n`);
+    } catch {
+      liveClients.delete(res);
+      clearInterval(heartbeatId);
+    }
+  }, SSE_HEARTBEAT_MS);
 
   req.on("close", () => {
     liveClients.delete(res);
+    clearInterval(heartbeatId);
   });
 });
 
-router.post("/dishes", requireMenuPermission("manageDishes"), async (req, res) => {
+router.post("/dishes", requireMenuPermission("manageDishes"), asyncHandler(async (req, res) => {
   const name = String(req.body.name || "").trim();
   if (!name) {
     return res.status(400).json({ error: "name is required" });
@@ -228,9 +244,9 @@ router.post("/dishes", requireMenuPermission("manageDishes"), async (req, res) =
 
   broadcastRefresh("dish_created");
   await sendState(res);
-});
+}));
 
-router.put("/dishes/:id", requireMenuPermission("manageDishes"), async (req, res) => {
+router.put("/dishes/:id", requireMenuPermission("manageDishes"), asyncHandler(async (req, res) => {
   const dishId = String(req.params.id || "").trim();
   const existing = await fetchOne(`SELECT * FROM couple_menu_dishes WHERE dish_id = ? LIMIT 1`, [dishId]);
   if (!existing) {
@@ -276,9 +292,9 @@ router.put("/dishes/:id", requireMenuPermission("manageDishes"), async (req, res
 
   broadcastRefresh("dish_updated");
   await sendState(res);
-});
+}));
 
-router.delete("/dishes/:id", requireMenuPermission("manageDishes"), async (req, res) => {
+router.delete("/dishes/:id", requireMenuPermission("manageDishes"), asyncHandler(async (req, res) => {
   const dishId = String(req.params.id || "").trim();
   const existing = await fetchOne(`SELECT * FROM couple_menu_dishes WHERE dish_id = ? LIMIT 1`, [dishId]);
   if (!existing) {
@@ -299,9 +315,9 @@ router.delete("/dishes/:id", requireMenuPermission("manageDishes"), async (req, 
 
   broadcastRefresh("dish_deleted");
   await sendState(res);
-});
+}));
 
-router.post("/dishes/import", requireMenuPermission("manageDishes"), async (req, res) => {
+router.post("/dishes/import", requireMenuPermission("manageDishes"), asyncHandler(async (req, res) => {
   const actor = actorFromRequest(req);
   const items = Array.isArray(req.body.items) ? req.body.items : [];
   const imported = [];
@@ -355,9 +371,9 @@ router.post("/dishes/import", requireMenuPermission("manageDishes"), async (req,
 
   broadcastRefresh("dish_imported");
   await sendState(res);
-});
+}));
 
-router.post("/requests", requireMenuPermission("submitRequest"), async (req, res) => {
+router.post("/requests", requireMenuPermission("submitRequest"), asyncHandler(async (req, res) => {
   const actor = actorFromRequest(req);
   const dishId = String(req.body.dishId || "").trim();
   let dishName = String(req.body.dishName || "").trim();
@@ -409,9 +425,9 @@ router.post("/requests", requireMenuPermission("submitRequest"), async (req, res
     "打开共享点菜台看看要不要安排上桌。",
   ]);
   await sendState(res);
-});
+}));
 
-router.patch("/requests/:id", requireMenuPermission("manageRequests"), async (req, res) => {
+router.patch("/requests/:id", requireMenuPermission("manageRequests"), asyncHandler(async (req, res) => {
   const requestId = String(req.params.id || "").trim();
   const existing = await fetchOne(`SELECT * FROM couple_menu_requests WHERE request_id = ? LIMIT 1`, [requestId]);
   if (!existing) {
@@ -446,9 +462,9 @@ router.patch("/requests/:id", requireMenuPermission("manageRequests"), async (re
     nextNote ? `备注：${nextNote}` : "",
   ]);
   await sendState(res);
-});
+}));
 
-router.delete("/requests/:id", requireMenuPermission("manageRequests"), async (req, res) => {
+router.delete("/requests/:id", requireMenuPermission("manageRequests"), asyncHandler(async (req, res) => {
   const requestId = String(req.params.id || "").trim();
   const existing = await fetchOne(`SELECT * FROM couple_menu_requests WHERE request_id = ? LIMIT 1`, [requestId]);
   if (!existing) {
@@ -469,9 +485,9 @@ router.delete("/requests/:id", requireMenuPermission("manageRequests"), async (r
 
   broadcastRefresh("request_deleted");
   await sendState(res);
-});
+}));
 
-router.post("/comments", requireMenuPermission("comment"), async (req, res) => {
+router.post("/comments", requireMenuPermission("comment"), asyncHandler(async (req, res) => {
   const actor = actorFromRequest(req);
   const targetType = String(req.body.targetType || "").trim();
   const targetId = String(req.body.targetId || "").trim();
@@ -516,6 +532,6 @@ router.post("/comments", requireMenuPermission("comment"), async (req, res) => {
     `内容：${content}`,
   ]);
   await sendState(res);
-});
+}));
 
 export default router;

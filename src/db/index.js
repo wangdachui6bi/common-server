@@ -431,6 +431,25 @@ export const db = {
     return rows[0] || null;
   },
 
+  async getSyncedTodosByIds({ namespace, todoIds }) {
+    const ids = Array.isArray(todoIds)
+      ? todoIds.filter((item) => typeof item === "string" && item)
+      : [];
+
+    if (ids.length === 0) {
+      return [];
+    }
+
+    const placeholders = ids.map(() => "?").join(", ");
+    const [rows] = await pool.execute(
+      `SELECT * FROM synced_todos
+       WHERE namespace_key = ?
+         AND todo_id IN (${placeholders})`,
+      [namespace, ...ids]
+    );
+    return Array.isArray(rows) ? rows : [];
+  },
+
   async upsertSyncedTodo({
     namespace,
     todoId,
@@ -461,6 +480,51 @@ export const db = {
     return result;
   },
 
+  async bulkUpsertSyncedTodos(items) {
+    const rows = Array.isArray(items) ? items.filter(Boolean) : [];
+    if (rows.length === 0) {
+      return;
+    }
+
+    const chunkSize = 100;
+    for (let index = 0; index < rows.length; index += chunkSize) {
+      const chunk = rows.slice(index, index + chunkSize);
+      const placeholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
+      const params = [];
+
+      for (const item of chunk) {
+        params.push(
+          item.namespace,
+          item.todoId,
+          item.text,
+          item.extraJson,
+          item.completed,
+          item.deleted,
+          item.createdAtMs,
+          item.updatedAtMs,
+          item.deletedAtMs,
+          item.sourceApp
+        );
+      }
+
+      await pool.execute(
+        `INSERT INTO synced_todos
+          (namespace_key, todo_id, text, extra_json, completed, deleted, created_at_ms, updated_at_ms, deleted_at_ms, source_app)
+         VALUES ${placeholders}
+         ON DUPLICATE KEY UPDATE
+          text = VALUES(text),
+          extra_json = VALUES(extra_json),
+          completed = VALUES(completed),
+          deleted = VALUES(deleted),
+          created_at_ms = VALUES(created_at_ms),
+          updated_at_ms = VALUES(updated_at_ms),
+          deleted_at_ms = VALUES(deleted_at_ms),
+          source_app = VALUES(source_app)`,
+        params
+      );
+    }
+  },
+
   async listSyncedTodos(namespace, options = {}) {
     const { includeDeleted = false } = options;
     const [rows] = await pool.execute(
@@ -471,6 +535,26 @@ export const db = {
       [namespace, includeDeleted ? 1 : 0]
     );
     return rows;
+  },
+
+  async softDeleteCompletedSyncedTodos({ namespace, updatedAtMs, sourceApp }) {
+    const normalizedSourceApp = String(sourceApp || "");
+    const [result] = await pool.execute(
+      `UPDATE synced_todos
+       SET completed = 0,
+           deleted = 1,
+           updated_at_ms = ?,
+           deleted_at_ms = ?,
+           source_app = CASE
+             WHEN ? != '' THEN ?
+             ELSE source_app
+           END
+       WHERE namespace_key = ?
+         AND completed = 1
+         AND deleted = 0`,
+      [updatedAtMs, updatedAtMs, normalizedSourceApp, normalizedSourceApp, namespace]
+    );
+    return result;
   },
 
   async getSyncSetting({ namespace, settingKey }) {
@@ -499,6 +583,25 @@ export const db = {
       [namespace, itemId]
     );
     return rows[0] || null;
+  },
+
+  async getWorkbenchPasswordItemsByIds({ namespace, itemIds }) {
+    const ids = Array.isArray(itemIds)
+      ? itemIds.filter((item) => typeof item === "string" && item)
+      : [];
+
+    if (ids.length === 0) {
+      return [];
+    }
+
+    const placeholders = ids.map(() => "?").join(", ");
+    const [rows] = await pool.execute(
+      `SELECT * FROM workbench_password_items
+       WHERE namespace_key = ?
+         AND item_id IN (${placeholders})`,
+      [namespace, ...ids]
+    );
+    return Array.isArray(rows) ? rows : [];
   },
 
   async upsertWorkbenchPasswordItem({
@@ -552,6 +655,59 @@ export const db = {
       ]
     );
     return result;
+  },
+
+  async bulkUpsertWorkbenchPasswordItems(items) {
+    const rows = Array.isArray(items) ? items.filter(Boolean) : [];
+    if (rows.length === 0) {
+      return;
+    }
+
+    const chunkSize = 100;
+    for (let index = 0; index < rows.length; index += chunkSize) {
+      const chunk = rows.slice(index, index + chunkSize);
+      const placeholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
+      const params = [];
+
+      for (const item of chunk) {
+        params.push(
+          item.namespace,
+          item.itemId,
+          item.name,
+          item.category,
+          item.host,
+          item.port,
+          item.username,
+          item.passwordCiphertext,
+          item.remark,
+          item.deleted,
+          item.createdAtMs,
+          item.updatedAtMs,
+          item.deletedAtMs,
+          item.sourceApp
+        );
+      }
+
+      await pool.execute(
+        `INSERT INTO workbench_password_items
+          (namespace_key, item_id, name, category, host, port, username, password_ciphertext, remark, deleted, created_at_ms, updated_at_ms, deleted_at_ms, source_app)
+         VALUES ${placeholders}
+         ON DUPLICATE KEY UPDATE
+          name = VALUES(name),
+          category = VALUES(category),
+          host = VALUES(host),
+          port = VALUES(port),
+          username = VALUES(username),
+          password_ciphertext = VALUES(password_ciphertext),
+          remark = VALUES(remark),
+          deleted = VALUES(deleted),
+          created_at_ms = VALUES(created_at_ms),
+          updated_at_ms = VALUES(updated_at_ms),
+          deleted_at_ms = VALUES(deleted_at_ms),
+          source_app = VALUES(source_app)`,
+        params
+      );
+    }
   },
 
   async listWorkbenchPasswordItems(namespace, options = {}) {

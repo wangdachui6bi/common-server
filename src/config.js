@@ -28,6 +28,9 @@ export const config = {
     previewQuality: parseInt(process.env.GALLERY_PREVIEW_QUALITY || "78", 10),
     requestTimeoutMs: parseInt(process.env.GALLERY_REQUEST_TIMEOUT_MS || String(30 * 60 * 1000), 10),
   },
+  server: {
+    requestTimeoutMs: parseInt(process.env.SERVER_REQUEST_TIMEOUT_MS || String(2 * 60 * 1000), 10),
+  },
   mysql: {
     host: process.env.MYSQL_HOST || "127.0.0.1",
     port: parseInt(process.env.MYSQL_PORT || "3306", 10),

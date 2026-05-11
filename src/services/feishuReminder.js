@@ -299,7 +299,14 @@ export async function checkFeishuTodoReminders(namespace = DEFAULT_NAMESPACE) {
 }
 
 export function startFeishuReminderScheduler(namespace = DEFAULT_NAMESPACE) {
+  let running = false;
+
   const run = async () => {
+    if (running) {
+      return;
+    }
+
+    running = true;
     try {
       const result = await checkFeishuTodoReminders(namespace);
       if (result.sent > 0) {
@@ -309,6 +316,8 @@ export function startFeishuReminderScheduler(namespace = DEFAULT_NAMESPACE) {
       }
     } catch (error) {
       console.error("[feishu-reminder] scheduler failed", error);
+    } finally {
+      running = false;
     }
   };
 

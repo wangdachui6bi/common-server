@@ -46,6 +46,7 @@ function asyncHandler(fn) {
 
 const SHARE_LINK_DEFAULT_HOURS = 24;
 const SHARE_LINK_MAX_HOURS = 24 * 30;
+const UPLOAD_CONCURRENCY = 4;
 
 function now() {
   return Date.now();
@@ -153,6 +154,28 @@ function parseSelectedAssetIds(value) {
     }
   }
   return result;
+}
+
+async function mapWithConcurrency(items, concurrency, mapper) {
+  const list = Array.isArray(items) ? items : [];
+  if (list.length === 0) {
+    return [];
+  }
+
+  const limit = Math.max(1, Math.min(concurrency, list.length));
+  const results = new Array(list.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < list.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      results[currentIndex] = await mapper(list[currentIndex], currentIndex);
+    }
+  }
+
+  await Promise.all(Array.from({ length: limit }, () => worker()));
+  return results;
 }
 
 async function fetchOne(sql, params = []) {
@@ -630,38 +653,45 @@ async function sendArchive(res, album, assets) {
 
 async function handleUpload({ album, actor, ownerUserId, files, metaItems }) {
   const monthPrefix = new Date().toISOString().slice(0, 7).replace("-", "/");
+  const uploadedAssets = [];
 
-  for (const [index, file] of files.entries()) {
-    const assetId = makeId("asset");
-    const ext = extname(file.originalname || "").toLowerCase() || "";
-    const storageKey = `${config.cos.pathPrefix}/${ownerUserId}/${monthPrefix}/${assetId}${ext}`;
-    const itemMeta = Array.isArray(metaItems) ? metaItems[index] || {} : {};
-    const stored = await storeUploadedFile({
-      tempFilePath: file.path,
-      storageKey,
-      mimeType: file.mimetype,
-    });
-    if (pickMediaType(file.mimetype) === "image") {
-      void ensureStoredObjectPreview({
-        storage_provider: stored.storageProvider,
-        storage_key: stored.storageKey,
-        mime_type: file.mimetype || "application/octet-stream",
-      }).catch((error) => {
-        console.warn(`[gallery] preview warmup failed for ${stored.storageKey}:`, error);
+  try {
+    const assetRecords = await mapWithConcurrency(files, UPLOAD_CONCURRENCY, async (file, index) => {
+      const assetId = makeId("asset");
+      const ext = extname(file.originalname || "").toLowerCase() || "";
+      const storageKey = `${config.cos.pathPrefix}/${ownerUserId}/${monthPrefix}/${assetId}${ext}`;
+      const itemMeta = Array.isArray(metaItems) ? metaItems[index] || {} : {};
+      const stored = await storeUploadedFile({
+        tempFilePath: file.path,
+        storageKey,
+        mimeType: file.mimetype,
       });
-    }
-    const timestamp = now();
 
-    await pool.execute(
-      `INSERT INTO shared_gallery_assets
-        (asset_id, album_id, original_name, caption, mime_type, media_type, size_bytes, width, height, duration_seconds, storage_provider, storage_key, is_favorite, uploaded_by, taken_at_ms, created_at_ms, updated_at_ms)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
+      const record = {
+        storageProvider: stored.storageProvider,
+        storageKey: stored.storageKey,
+        mimeType: file.mimetype || "application/octet-stream",
+        values: null,
+      };
+      uploadedAssets.push(record);
+
+      if (pickMediaType(file.mimetype) === "image") {
+        void ensureStoredObjectPreview({
+          storage_provider: stored.storageProvider,
+          storage_key: stored.storageKey,
+          mime_type: record.mimeType,
+        }).catch((error) => {
+          console.warn(`[gallery] preview warmup failed for ${stored.storageKey}:`, error);
+        });
+      }
+
+      const timestamp = now();
+      record.values = [
         assetId,
         album.album_id,
         String(file.originalname || assetId).slice(0, 255),
         String(itemMeta.caption || "").trim(),
-        file.mimetype || "application/octet-stream",
+        record.mimeType,
         pickMediaType(file.mimetype),
         Number(file.size || 0),
         itemMeta.width === null || itemMeta.width === undefined ? null : Number(itemMeta.width),
@@ -676,8 +706,34 @@ async function handleUpload({ album, actor, ownerUserId, files, metaItems }) {
         normalizeMillis(itemMeta.takenAt),
         timestamp,
         timestamp,
-      ]
+      ];
+
+      return record;
+    });
+
+    const chunkSize = 24;
+    for (let index = 0; index < assetRecords.length; index += chunkSize) {
+      const chunk = assetRecords.slice(index, index + chunkSize);
+      const placeholders = chunk.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
+      const params = chunk.flatMap((record) => record.values);
+
+      await pool.execute(
+        `INSERT INTO shared_gallery_assets
+          (asset_id, album_id, original_name, caption, mime_type, media_type, size_bytes, width, height, duration_seconds, storage_provider, storage_key, is_favorite, uploaded_by, taken_at_ms, created_at_ms, updated_at_ms)
+         VALUES ${placeholders}`,
+        params
+      );
+    }
+  } catch (error) {
+    await Promise.allSettled(
+      uploadedAssets.map((asset) =>
+        removeStoredObject({
+          storage_provider: asset.storageProvider,
+          storage_key: asset.storageKey,
+        })
+      )
     );
+    throw error;
   }
 
   await pool.execute(`UPDATE shared_gallery_albums SET updated_by = ?, updated_at_ms = ? WHERE album_id = ?`, [

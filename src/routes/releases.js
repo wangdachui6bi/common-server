@@ -8,6 +8,12 @@ import { requireAdmin } from "../middleware/auth.js";
 
 const router = Router();
 
+function asyncHandler(handler) {
+  return (req, res, next) => {
+    Promise.resolve(handler(req, res, next)).catch(next);
+  };
+}
+
 mkdirSync(config.uploadDir, { recursive: true });
 
 const storage = multer.diskStorage({
@@ -29,7 +35,7 @@ const upload = multer({
 });
 
 // ─── Admin: List all apps ─────────────────────────────────────────────────────
-router.get("/", requireAdmin, async (_req, res) => {
+router.get("/", requireAdmin, asyncHandler(async (_req, res) => {
   const apps = await db.listApps();
   res.json(
     apps.map((a) => ({
@@ -39,10 +45,10 @@ router.get("/", requireAdmin, async (_req, res) => {
       createdAt: a.app_created_at,
     }))
   );
-});
+}));
 
 // ─── Public: Get latest release for an app + platform ────────────────────────
-router.get("/:appId/releases/latest", async (req, res) => {
+router.get("/:appId/releases/latest", asyncHandler(async (req, res) => {
   const { appId } = req.params;
   const platform = req.query.platform || "android";
 
@@ -59,10 +65,10 @@ router.get("/:appId/releases/latest", async (req, res) => {
     forceUpdate: !!release.force_update,
     createdAt: release.created_at,
   });
-});
+}));
 
 // ─── Public: Download a specific release ─────────────────────────────────────
-router.get("/:appId/releases/:version/download", async (req, res) => {
+router.get("/:appId/releases/:version/download", asyncHandler(async (req, res) => {
   const { appId, version } = req.params;
   const platform = req.query.platform || "android";
 
@@ -77,10 +83,10 @@ router.get("/:appId/releases/:version/download", async (req, res) => {
   }
 
   res.download(filePath, release.filename);
-});
+}));
 
 // ─── Admin: Upload a new release ─────────────────────────────────────────────
-router.post("/:appId/releases", requireAdmin, upload.single("file"), async (req, res) => {
+router.post("/:appId/releases", requireAdmin, upload.single("file"), asyncHandler(async (req, res) => {
   const { appId } = req.params;
   const { version, platform = "android", changelog = "", forceUpdate = "0" } = req.body;
 
@@ -126,10 +132,10 @@ router.post("/:appId/releases", requireAdmin, upload.single("file"), async (req,
       filesize: req.file.size,
     },
   });
-});
+}));
 
 // ─── Admin: List releases ────────────────────────────────────────────────────
-router.get("/:appId/releases", requireAdmin, async (req, res) => {
+router.get("/:appId/releases", requireAdmin, asyncHandler(async (req, res) => {
   const { appId } = req.params;
   const limit = Math.min(parseInt(req.query.limit || "20", 10), 100);
   const offset = parseInt(req.query.offset || "0", 10);
@@ -151,10 +157,10 @@ router.get("/:appId/releases", requireAdmin, async (req, res) => {
       createdAt: r.created_at,
     })),
   });
-});
+}));
 
 // ─── Admin: Delete a release ─────────────────────────────────────────────────
-router.delete("/:appId/releases/:version", requireAdmin, async (req, res) => {
+router.delete("/:appId/releases/:version", requireAdmin, asyncHandler(async (req, res) => {
   const { appId, version } = req.params;
   const platform = req.query.platform || "android";
 
@@ -169,10 +175,10 @@ router.delete("/:appId/releases/:version", requireAdmin, async (req, res) => {
   await db.deleteRelease({ appId, version, platform });
 
   res.json({ message: "Release deleted" });
-});
+}));
 
 // ─── Admin: Delete an app ────────────────────────────────────────────────────
-router.delete("/:appId", requireAdmin, async (req, res) => {
+router.delete("/:appId", requireAdmin, asyncHandler(async (req, res) => {
   const { appId } = req.params;
 
   // Check if app exists
@@ -191,6 +197,6 @@ router.delete("/:appId", requireAdmin, async (req, res) => {
   await db.deleteApp(appId);
 
   res.json({ message: "App deleted" });
-});
+}));
 
 export default router;

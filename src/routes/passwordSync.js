@@ -82,6 +82,27 @@ function resolvePasswordCiphertext({ password, existing, allowEmpty = false }) {
 async function importPasswords(req, res) {
   const sourceApp = normalizeText(req.body.sourceApp, 100);
   const items = Array.isArray(req.body.items) ? req.body.items : [];
+  const itemIds = [];
+  const seenItemIds = new Set();
+
+  for (const item of items) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+
+    const itemId = normalizeText(item.id, 120);
+    if (itemId && !seenItemIds.has(itemId)) {
+      seenItemIds.add(itemId);
+      itemIds.push(itemId);
+    }
+  }
+
+  const existingRows = await db.getWorkbenchPasswordItemsByIds({
+    namespace: DEFAULT_NAMESPACE,
+    itemIds,
+  });
+  const currentById = new Map(existingRows.map((row) => [row.item_id, row]));
+  const pendingUpserts = new Map();
 
   for (const item of items) {
     if (!item || typeof item !== "object") {
@@ -93,7 +114,7 @@ async function importPasswords(req, res) {
       continue;
     }
 
-    const existing = await db.getWorkbenchPasswordItem({ namespace: DEFAULT_NAMESPACE, itemId });
+    const existing = currentById.get(itemId) || null;
     const createdAtMs = toTimestamp(item.createdAt);
     const updatedAtMs = toTimestamp(item.updatedAt, createdAtMs);
     const deleted = Boolean(item.deleted);
@@ -103,7 +124,7 @@ async function importPasswords(req, res) {
       continue;
     }
 
-    await db.upsertWorkbenchPasswordItem({
+    const nextRow = {
       namespace: DEFAULT_NAMESPACE,
       itemId,
       name: normalizeText(item.name || existing?.name || "Deleted item", 120),
@@ -128,7 +149,28 @@ async function importPasswords(req, res) {
       updatedAtMs,
       deletedAtMs,
       sourceApp,
+    };
+
+    pendingUpserts.set(itemId, nextRow);
+    currentById.set(itemId, {
+      item_id: itemId,
+      name: nextRow.name,
+      category: nextRow.category,
+      host: nextRow.host,
+      port: nextRow.port,
+      username: nextRow.username,
+      password_ciphertext: nextRow.passwordCiphertext,
+      remark: nextRow.remark,
+      deleted: nextRow.deleted,
+      created_at_ms: nextRow.createdAtMs,
+      updated_at_ms: nextRow.updatedAtMs,
+      deleted_at_ms: nextRow.deletedAtMs,
+      source_app: nextRow.sourceApp,
     });
+  }
+
+  if (pendingUpserts.size > 0) {
+    await db.bulkUpsertWorkbenchPasswordItems([...pendingUpserts.values()]);
   }
 
   return sendPasswordList(res);
