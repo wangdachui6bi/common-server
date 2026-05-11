@@ -81,6 +81,28 @@ export async function initDB() {
   `);
 
   await pool.execute(`
+    CREATE TABLE IF NOT EXISTS workbench_password_items (
+      namespace_key        VARCHAR(120) NOT NULL,
+      item_id              VARCHAR(120) NOT NULL,
+      name                 VARCHAR(120) NOT NULL,
+      category             VARCHAR(40)  NOT NULL DEFAULT 'other',
+      host                 VARCHAR(255) NOT NULL DEFAULT '',
+      port                 VARCHAR(40)  NOT NULL DEFAULT '',
+      username             VARCHAR(120) NOT NULL DEFAULT '',
+      password_ciphertext  MEDIUMTEXT   NOT NULL,
+      remark               TEXT         NOT NULL,
+      deleted              TINYINT      NOT NULL DEFAULT 0,
+      created_at_ms        BIGINT       NOT NULL,
+      updated_at_ms        BIGINT       NOT NULL,
+      deleted_at_ms        BIGINT       NULL,
+      source_app           VARCHAR(100) NOT NULL DEFAULT '',
+      PRIMARY KEY (namespace_key, item_id),
+      INDEX idx_workbench_password_items_updated (namespace_key, updated_at_ms DESC),
+      INDEX idx_workbench_password_items_deleted (namespace_key, deleted, updated_at_ms DESC)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `);
+
+  await pool.execute(`
     CREATE TABLE IF NOT EXISTS todo_reminder_logs (
       namespace_key VARCHAR(120) NOT NULL,
       reminder_key  VARCHAR(191) NOT NULL,
@@ -469,6 +491,79 @@ export const db = {
       [namespace, settingKey, valueJson, updatedAtMs]
     );
     return result;
+  },
+
+  async getWorkbenchPasswordItem({ namespace, itemId }) {
+    const [rows] = await pool.execute(
+      `SELECT * FROM workbench_password_items WHERE namespace_key = ? AND item_id = ? LIMIT 1`,
+      [namespace, itemId]
+    );
+    return rows[0] || null;
+  },
+
+  async upsertWorkbenchPasswordItem({
+    namespace,
+    itemId,
+    name,
+    category,
+    host,
+    port,
+    username,
+    passwordCiphertext,
+    remark,
+    deleted,
+    createdAtMs,
+    updatedAtMs,
+    deletedAtMs,
+    sourceApp,
+  }) {
+    const [result] = await pool.execute(
+      `INSERT INTO workbench_password_items
+        (namespace_key, item_id, name, category, host, port, username, password_ciphertext, remark, deleted, created_at_ms, updated_at_ms, deleted_at_ms, source_app)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+        name = VALUES(name),
+        category = VALUES(category),
+        host = VALUES(host),
+        port = VALUES(port),
+        username = VALUES(username),
+        password_ciphertext = VALUES(password_ciphertext),
+        remark = VALUES(remark),
+        deleted = VALUES(deleted),
+        created_at_ms = VALUES(created_at_ms),
+        updated_at_ms = VALUES(updated_at_ms),
+        deleted_at_ms = VALUES(deleted_at_ms),
+        source_app = VALUES(source_app)`,
+      [
+        namespace,
+        itemId,
+        name,
+        category,
+        host,
+        port,
+        username,
+        passwordCiphertext,
+        remark,
+        deleted,
+        createdAtMs,
+        updatedAtMs,
+        deletedAtMs,
+        sourceApp,
+      ]
+    );
+    return result;
+  },
+
+  async listWorkbenchPasswordItems(namespace, options = {}) {
+    const { includeDeleted = true } = options;
+    const [rows] = await pool.execute(
+      `SELECT * FROM workbench_password_items
+       WHERE namespace_key = ?
+         AND (? = 1 OR deleted = 0)
+       ORDER BY updated_at_ms DESC`,
+      [namespace, includeDeleted ? 1 : 0]
+    );
+    return rows;
   },
 
   async getReminderLog({ namespace, reminderKey }) {

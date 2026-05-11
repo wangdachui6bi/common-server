@@ -10,6 +10,7 @@ import authRouter from "./routes/auth.js";
 import adminRouter from "./routes/admin.js";
 import releasesRouter from "./routes/releases.js";
 import todoSyncRouter from "./routes/todoSync.js";
+import passwordSyncRouter from "./routes/passwordSync.js";
 import menuBoardRouter from "./routes/menuBoard.js";
 import sharedGalleryRouter from "./routes/sharedGallery.js";
 import { startFeishuReminderScheduler } from "./services/feishuReminder.js";
@@ -37,6 +38,7 @@ app.use("/api/auth", authRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/apps", releasesRouter);
 app.use("/api/sync", todoSyncRouter);
+app.use("/api/sync", passwordSyncRouter);
 app.use("/api/menu", menuBoardRouter);
 app.use("/api/gallery", sharedGalleryRouter);
 
