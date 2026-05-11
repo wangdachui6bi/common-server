@@ -28,6 +28,20 @@ async function hasColumn(tableName, columnName) {
   return Array.isArray(rows) && rows.length > 0;
 }
 
+async function hasIndex(tableName, indexName) {
+  const [rows] = await pool.execute(
+    `SELECT INDEX_NAME
+     FROM INFORMATION_SCHEMA.STATISTICS
+     WHERE TABLE_SCHEMA = ?
+       AND TABLE_NAME = ?
+       AND INDEX_NAME = ?
+     LIMIT 1`,
+    [config.mysql.database, tableName, indexName]
+  );
+
+  return Array.isArray(rows) && rows.length > 0;
+}
+
 export async function initDB() {
   await pool.execute(`
     CREATE TABLE IF NOT EXISTS apps (
@@ -66,7 +80,8 @@ export async function initDB() {
       deleted_at_ms BIGINT       NULL,
       source_app    VARCHAR(100) NOT NULL DEFAULT '',
       PRIMARY KEY (namespace_key, todo_id),
-      INDEX idx_synced_todos_namespace_updated (namespace_key, updated_at_ms DESC)
+      INDEX idx_synced_todos_namespace_updated (namespace_key, updated_at_ms DESC),
+      INDEX idx_synced_todos_namespace_deleted_updated (namespace_key, deleted, updated_at_ms DESC)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
 
@@ -114,6 +129,13 @@ export async function initDB() {
 
   if (!(await hasColumn("synced_todos", "extra_json"))) {
     await pool.execute(`ALTER TABLE synced_todos ADD COLUMN extra_json MEDIUMTEXT NULL AFTER text`);
+  }
+
+  if (!(await hasIndex("synced_todos", "idx_synced_todos_namespace_deleted_updated"))) {
+    await pool.execute(
+      `CREATE INDEX idx_synced_todos_namespace_deleted_updated
+       ON synced_todos (namespace_key, deleted, updated_at_ms DESC)`
+    );
   }
 
   await pool.execute(`
